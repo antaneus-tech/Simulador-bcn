@@ -685,16 +685,41 @@ with tab3:
 # ============================================================================
 
 def clean_str(txt: str) -> str:
-    """Sanitiza caracteres no-latin1 para fpdf."""
+    """
+    Sanitiza caracteres no-latin1 para fpdf.
+    Doble capa: tabla de reemplazos explícitos + fallback encode/decode con replace.
+    """
     repls = {
-        '€': 'EUR', 'á': 'a', 'é': 'e', 'í': 'i', 'ó': 'o', 'ú': 'u',
-        'à': 'a', 'è': 'e', 'ì': 'i', 'ò': 'o', 'ù': 'u',
-        'ñ': 'n', 'Ñ': 'N', '²': '2', '–': '-', '•': '-',
-        'à': 'a', 'ï': 'i', 'ü': 'u', 'ö': 'o', 'ä': 'a',
-        '\u2019': "'", '\u201c': '"', '\u201d': '"',
+        # Moneda
+        '€': 'EUR',
+        # Vocales con tilde / acento
+        'á': 'a', 'Á': 'A', 'à': 'a', 'À': 'A', 'â': 'a', 'Â': 'A', 'ã': 'a', 'Ã': 'A', 'ä': 'a', 'Ä': 'A',
+        'é': 'e', 'É': 'E', 'è': 'e', 'È': 'E', 'ê': 'e', 'Ê': 'E', 'ë': 'e', 'Ë': 'E',
+        'í': 'i', 'Í': 'I', 'ì': 'i', 'Ì': 'I', 'î': 'i', 'Î': 'I', 'ï': 'i', 'Ï': 'I',
+        'ó': 'o', 'Ó': 'O', 'ò': 'o', 'Ò': 'O', 'ô': 'o', 'Ô': 'O', 'õ': 'o', 'Õ': 'O', 'ö': 'o', 'Ö': 'O',
+        'ú': 'u', 'Ú': 'U', 'ù': 'u', 'Ù': 'U', 'û': 'u', 'Û': 'U', 'ü': 'u', 'Ü': 'U',
+        # Eñe
+        'ñ': 'n', 'Ñ': 'N',
+        # Superíndices y subíndices
+        '²': '2', '³': '3', '¹': '1', '°': ' deg',
+        # Guiones y comillas tipográficas
+        '–': '-', '—': '-', '−': '-',
+        '\u2019': "'", '\u2018': "'",
+        '\u201c': '"', '\u201d': '"',
+        '\u00ab': '"', '\u00bb': '"',
+        # Viñetas y símbolos
+        '•': '-', '·': '.', '·': '.',
+        '≈': '~', '≥': '>=', '≤': '<=',
+        '×': 'x', '÷': '/',
+        # Otros unicode frecuentes
+        '\u00a0': ' ',   # non-breaking space
+        '\u00ad': '',    # soft hyphen
+        '\u2026': '...', # ellipsis
     }
     for k, v in repls.items():
         txt = txt.replace(k, v)
+    # Capa de seguridad final: cualquier carácter fuera de latin-1 se reemplaza por '?'
+    txt = txt.encode('latin-1', errors='replace').decode('latin-1')
     return txt
 
 
@@ -767,7 +792,7 @@ def generate_exec_report(dist_idx: int, scenarios: dict, params: dict,
 
     # Tabla de sensibilidad regulatoria
     pdf.set_font('Arial', 'B', 11)
-    pdf.cell(0, 8, clean_str("1. ANALISIS DE SENSIBILIDAD — IMPACTO REGULATORIO"), 0, 1)
+    pdf.cell(0, 8, clean_str("1. ANALISIS DE SENSIBILIDAD - IMPACTO REGULATORIO"), 0, 1)
     h = ["Escenario", "Venta (Shock)", "Venta (Sin Shock)", "Alq (Shock)", "Alq (Sin Shock)"]
     w = [35, 38, 38, 38, 38]
     pdf.set_fill_color(44, 62, 80); pdf.set_text_color(255); pdf.set_font('Arial', 'B', 8)
@@ -799,7 +824,7 @@ def generate_exec_report(dist_idx: int, scenarios: dict, params: dict,
     # Tabla maestra
     pdf.add_page()
     pdf.set_font('Arial', 'B', 11)
-    pdf.cell(0, 8, clean_str("3. TABLA MAESTRA — PRECIOS REALES 2026 vs PROYECCION 2032"), 0, 1)
+    pdf.cell(0, 8, clean_str("3. TABLA MAESTRA - PRECIOS REALES 2026 vs PROYECCION 2032"), 0, 1)
 
     h_m = ["Distrito", "Venta '26", "Venta '32", "Var%", "Alq '26", "Alq '32", "Yield'32"]
     w_m = [45, 25, 25, 18, 25, 25, 22]
@@ -1178,7 +1203,7 @@ def generate_tech_paper(params: dict, n_sim: int) -> bytes:
         "- Sumas de filas de cada MTM = 1.0 (condicion de estochasticidad).\n"
         "- Betas en rango [0.5, 1.5] (plausibilidad economica).\n"
         "- Factorizabilidad de Cholesky (L triangular inferior, diagonal positiva).\n"
-        "- Reconstruccion correcta: L*L^T ≈ Sigma (error maximo < 1e-6).\n\n"
+        "- Reconstruccion correcta: L*L^T aprox Sigma (error maximo < 1e-6).\n\n"
         "Resultados de la ejecucion actual:"
     ))
     pdf.set_font('Courier', '', 8)
@@ -1321,3 +1346,4 @@ st.caption(
     f"Fuente: {FUENTE_DATO} | n_sim activo: {n_sim_ui} | "
     f"Regimen: {reg_sel}"
 )
+
