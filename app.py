@@ -296,21 +296,26 @@ def inicializar_modelo_estructural():
         ) - 1
     drift_historico_alq = retornos_alq_obs.mean(axis=1)
 
-    # --- B: COEFICIENTES VAR(1) ---
-    # Estimacion OLS: r_i(t) = A_ij * r_j(t-1) + eps
-    # Para cada distrito i, regresamos sus retornos sobre todos los retornos del periodo anterior
-    n_obs = retornos_obs.shape[1]
-    if n_obs >= 4:
-        Y = retornos_obs[:, 1:].T        # (T-1, n_distritos)
-        X = retornos_obs[:, :-1].T       # (T-1, n_distritos)
-        # OLS multivariado: A = (X'X)^{-1} X'Y
-        try:
-            XtX_inv = np.linalg.pinv(X.T @ X)
-            A_var   = XtX_inv @ (X.T @ Y)   # (n_distritos, n_distritos)
-        except Exception:
-            A_var = np.eye(n_distritos) * 0.1
-    else:
-        A_var = np.eye(n_distritos) * 0.1
+    # --- B: COEFICIENTES AR(1) UNIVARIADOS POR DISTRITO ---
+    # JUSTIFICACION: con n=7 observaciones y p=10 variables, el VAR(10x10)
+    # multivariado OLS produce radio espectral > 2 (proceso explosivo).
+    # Solucion correcta con n<<p: AR(1) univariado por distrito.
+    #   rho_i = Cov(r_i(t), r_i(t-1)) / Var(r_i(t-1))
+    # Truncado a [-0.35, +0.35]: estacionariedad garantizada (radio esp < 1).
+    # A_var es diagonal: interdependencias via Cholesky, no via A_var.
+    ar1_coefs = np.zeros(n_distritos)
+    for i in range(n_distritos):
+        r = retornos_obs[i]
+        if len(r) >= 3:
+            cov_ar = np.cov(r[1:], r[:-1])[0, 1]
+            var_ar = np.var(r[:-1])
+            rho_i  = cov_ar / var_ar if var_ar > 1e-10 else 0.0
+        else:
+            rho_i = 0.0
+        ar1_coefs[i] = np.clip(rho_i, -0.35, 0.35)
+    A_var = np.diag(ar1_coefs)
+    logger.info("AR(1) coefs: %s | Radio espectral: %.4f",
+                ar1_coefs.round(3), np.abs(ar1_coefs).max())
 
     # --- C: RECONSTRUCCION HISTORICA 2007-2018 ---
     reconstruidos = np.zeros((n_distritos, len(anos_larga_data)))
@@ -417,8 +422,8 @@ def simular_escenario_cached(params_hash: tuple):
     euribor_adj_alq =  np.clip((euribor - 2.5) / 100.0 * 0.4, -0.01, 0.02)  # beneficia alq
     paro_adj        = -np.clip((paro - 10.0) / 100.0 * 0.5, -0.02, 0.03)
 
-    # Coeficiente VAR ponderado (reducido para no dominar el drift historico)
-    lambda_var = 0.25
+    # Coeficiente AR(1): contribucion moderada para capturar inercia sin dominar
+    lambda_var = 0.15
 
     np.random.seed(42)
     n_anos  = len(anos_proy)
@@ -520,7 +525,9 @@ def simular_escenario_cached(params_hash: tuple):
             sim_vta[sim, :, i] = p_vta
             sim_alq[sim, :, i] = p_alq
 
-            r_prev = tasa_v.copy()  # actualizar retorno previo para VAR(1)
+            # AR(1): r_prev debe ser el retorno base sin escalar por sensibilidad
+            # para evitar amplificacion acumulada. Usamos drift historico + var_component.
+            r_prev = np.clip(drift_v.copy(), -0.08, 0.08)
 
     return sim_vta, sim_alq
 
@@ -559,10 +566,10 @@ def run_all_tests():
 
     # VAR: matriz A estable (radio espectral < 1 para estacionariedad)
     eigvals_var = np.abs(np.linalg.eigvals(A_VAR))
-    stable = np.all(eigvals_var < 1.5)
-    results.append(("VAR(1) radio espectral < 1.5",
+    stable = np.all(eigvals_var <= 0.40 + 1e-9)
+    results.append(("AR(1) radio espectral <= 0.40 (estacionariedad)",
                      stable,
-                     f"Max eigenvalue: {eigvals_var.max():.4f}"))
+                     f"Max |rho_i|: {eigvals_var.max():.4f} (limite: 0.40)"))
 
     # Betas
     in_rng_b = np.all((BETAS_MODELO >= 0.5) & (BETAS_MODELO <= 1.5))
@@ -1958,5 +1965,7 @@ st.caption(
     f"Regimen: {reg_sel} | Euribor: {euribor_val}% | IPC: {ipc_val}% | "
     f"Paro: {paro_val}% | n_sim: {n_sim_ui}"
 )
+
+
 
 
