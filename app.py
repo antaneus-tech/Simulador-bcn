@@ -795,8 +795,11 @@ with tab1:
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5))
 
     # Venta
+    # Solo graficar hasta ano_fin del dataset activo (evita valor 0 si ese año
+    # no está en los datos de venta — p.ej. 2026 en el set Ayuntamiento)
     rec = modelo_act['reconstruidos']
-    ax1.plot(anos_macro, rec[idx], 'o-', color='#2c3e50',
+    mask_rec = anos_macro <= ds_activo['ano_fin']
+    ax1.plot(anos_macro[mask_rec], rec[idx][mask_rec], 'o-', color='#2c3e50',
              label='Historico/Rec.', linewidth=1.5, markersize=3)
     ax1.axvline(x=ds_activo['ano_fin'], color='navy',
                 linestyle='--', linewidth=0.8, alpha=0.6,
@@ -1403,10 +1406,12 @@ def generate_metodologia(params, n_sim, modelo) -> bytes:
     pdf.ln(5)
     pdf.set_font('Times','',9)
     ds = DATASETS[params['dataset_key']]
+    probs_met = calcular_probabilidades_regimen(params['euribor'], params['ipc'], params['paro'])
     for ln in [
-        f"Version: Barcelona Strategic Model v33.0",
+        f"Version del modelo   : Barcelona Strategic Model v33.0",
         f"Set de datos activo  : {params['dataset_key']}",
         f"Fuente               : {ds['fuente']}",
+        f"Fecha dato real base : {ds['fecha_dato']}",
         f"Horizonte proyeccion : {ds['ano_fin']+1}-2032",
         f"Metodo estimacion    : {modelo['metodo_var']}",
         f"Generado             : {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}",
@@ -1417,147 +1422,583 @@ def generate_metodologia(params, n_sim, modelo) -> bytes:
     pdf.ln(3)
     _bloque_trazabilidad(pdf, params, "Todos los distritos", n_sim, modelo)
 
-    # SECCION 1
+    # ---- INDICE ----
+    pdf.add_page()
+    pdf.set_font('Times','B',13)
+    pdf.cell(0,8,clean_str("INDICE DE CONTENIDOS"),0,1,'C')
+    pdf.ln(2)
+    pdf.set_font('Times','',10)
+    indice_items = [
+        ("1.",  "Introduccion y Contexto Economico del Mercado Barcelones"),
+        ("2.",  "Novedades de la Version 33: Doble Fuente de Datos"),
+        ("3.",  "Arquitectura General del Modelo: Vision de Conjunto"),
+        ("4.",  "Datos de Entrada: Calibracion y Fuentes"),
+        ("5.",  "Calibracion de Elasticidades (Beta CAPM)"),
+        ("6.",  "Drift Endogeno: Retornos Historicos y Ajuste Macro"),
+        ("7.",  "Estimacion Adaptativa: AR(1) Diagonal vs VAR(1) Ridge"),
+        ("8.",  "Indicadores Macroeconomicos y la Cadena de Markov No Homogenea"),
+        ("9.",  "Motor Monte Carlo: Algoritmo de Simulacion Completo"),
+        ("10.", "Estructura de Correlacion Espacial: Descomposicion de Cholesky"),
+        ("11.", "Volatilidad Dinamica: DCC Simplificado"),
+        ("12.", "Funcion de Shock Regulatorio (Jump Process, Ano Configurable)"),
+        ("13.", "Retroalimentacion Alquiler-Venta (Canal rho)"),
+        ("14.", "Agregacion Estadistica y Percentiles"),
+        ("15.", "Limitaciones del Modelo y Advertencias"),
+        ("16.", "Tests de Integridad Matematica"),
+        ("17.", "Referencias Bibliograficas y Normativas"),
+    ]
+    for num, titulo in indice_items:
+        pdf.cell(10,6,clean_str(num),0,0)
+        pdf.cell(0,6,clean_str(titulo),0,1)
+    pdf.ln(2)
+
+    # ---- SECCION 1: INTRODUCCION ----
     pdf.add_page()
     pdf.set_font('Times','B',12)
-    pdf.cell(0,8,clean_str("1. SISTEMA DE DOBLE FUENTE DE DATOS"),0,1)
+    pdf.cell(0,8,clean_str("1. INTRODUCCION Y CONTEXTO ECONOMICO"),0,1)
     pdf.set_font('Times','',10)
     pdf.multi_cell(0,5.5,clean_str(
-        "El modelo v33.0 incorpora dos fuentes de datos independientes que el usuario "
-        "puede seleccionar desde el panel de control. Cada fuente se calibra de forma "
-        "completamente independiente: betas CAPM, drift historico, matriz de "
-        "correlacion (Cholesky) y coeficientes AR(1)/VAR(1) se estiman sobre los "
-        "datos de la fuente seleccionada.\n\n"
-        "SET A - DATOS PORTALES INMOBILIARIOS (Idealista / Incasol):\n"
-        "Precios de oferta (asking price) por distrito, 2019-2026. Representan la "
-        "banda alta del mercado: el precio al que los vendedores quieren vender, "
-        "no necesariamente el precio de cierre. Son datos de alta frecuencia y "
-        "granularidad distrital, actualizados a Q1 2026.\n\n"
-        "SET B - DATOS OFICIALES AYUNTAMIENTO DE BARCELONA:\n"
-        "Estadisticas oficiales del Portal de Dades del Ajuntament. Venta: 2012-2025 "
-        "(14 anos). Alquiler: 2000-2025 (26 anos). Son precios de transaccion real "
-        "(lo que efectivamente se paga), que historicamente estan por debajo de los "
-        "precios de oferta. La mayor longitud de la serie permite activar el VAR(1) "
-        "multivariado completo con regularizacion Ridge.\n\n"
-        "LOGICA DE ESTIMACION ADAPTATIVA:\n"
-        "El modelo detecta automaticamente el numero de retornos anuales disponibles "
-        "en el set seleccionado. Si n >= 10 (suficiente para VAR(10x10) con n>p), "
-        "se activa el VAR(1) Ridge. Si n < 10, se usa AR(1) univariado diagonal. "
-        "Con el set del Ayuntamiento (n=13 retornos de venta), el VAR completo es "
-        "estadisticamente viable. Con el set de Portales (n=7), se usa AR(1)."
+        "El mercado inmobiliario residencial de Barcelona presenta cuatro caracteristicas "
+        "estructurales que justifican un tratamiento econometrico avanzado y diferencian "
+        "este modelo de una simple extrapolacion lineal.\n\n"
+        "PRIMERA - HETEROGENEIDAD DISTRITAL EXTREMA: los precios de venta oscilan en 2025-2026 "
+        "entre los ~2.946 EUR/m2 de Nou Barris y los ~6.896 EUR/m2 de Sarria-Sant Gervasi "
+        "(brecha del 134%), reflejo de diferencias fundamentales en capital humano, "
+        "accesibilidad al empleo, dotacion de servicios, presion turistica y perfil de demanda. "
+        "Esta heterogeneidad exige modelizar cada distrito de forma individual pero "
+        "interconectada, con elasticidades especificas calibradas sobre datos historicos.\n\n"
+        "SEGUNDA - INTERVENCION REGULATORIA DE ALTO IMPACTO: la Ley 12/2023 de Derecho a "
+        "la Vivienda y las restricciones municipales a las licencias de vivienda turistica "
+        "(VT) constituyen shocks exogenos discretos cuyo efecto sobre los precios es "
+        "asimetrico segun la densidad de VT en cada distrito. Ignorarlos produciria "
+        "proyecciones sobreestimadas especialmente en Eixample y Ciutat Vella.\n\n"
+        "TERCERA - DEPENDENCIA DEL CICLO MACROECONOMICO: los tipos de interes (Euribor), "
+        "la inflacion (IPC) y el mercado laboral (paro) son determinantes primarios de la "
+        "demanda efectiva de vivienda. El Euribor tiene un impacto asimetrico documentado: "
+        "comprime la demanda de compra (mayores cuotas hipotecarias) pero puede sostener o "
+        "elevar el alquiler (desplazamiento de demanda). El IPC real determina si los "
+        "precios crecen en terminos reales o solo nominalmente. El paro actua con retardo "
+        "de 12-18 meses sobre la confianza del comprador.\n\n"
+        "CUARTA - CORRELACION ESPACIAL DINAMICA: los mercados de distritos adyacentes o "
+        "similares exhiben correlacion significativa por factores compartidos. Esta "
+        "correlacion no es constante: en periodos de crisis tiende a converger hacia 1 "
+        "(todos los mercados caen juntos) y en expansion se dispersa. Un modelo que asuma "
+        "correlacion constante subestimara el riesgo en escenarios adversos."
     ))
 
-    # SECCION 2 — reutilizar arquitectura v32
+    # ---- SECCION 2: NOVEDADES V33 ----
     pdf.add_page()
     pdf.set_font('Times','B',12)
-    pdf.cell(0,8,clean_str("2. ARQUITECTURA DEL MODELO Y ECUACION GOBERNANTE"),0,1)
+    pdf.cell(0,8,clean_str("2. NOVEDADES DE LA VERSION 33: DOBLE FUENTE DE DATOS"),0,1)
     pdf.set_font('Times','',10)
     pdf.multi_cell(0,5.5,clean_str(
-        "El motor de simulacion es identico para ambos sets de datos. "
-        "Solo cambian los parametros calibrados (drift, A_var, L, vol). "
-        "La ecuacion gobernante es:\n"
+        "La version 33.0 introduce el principal avance estructural respecto a v32: "
+        "un sistema de doble fuente de datos con calibracion completamente independiente "
+        "para cada fuente. El usuario puede seleccionar el set de datos desde el panel "
+        "lateral, y todos los parametros del modelo (drift, betas, Cholesky, A_var) se "
+        "recalibran automaticamente sobre la fuente seleccionada.\n\n"
+        "SET A - DATOS PORTALES INMOBILIARIOS (Idealista / Incasol):\n"
+        "Precios de oferta (asking price) por distrito, 2019-2026 (8 anos, n=7 retornos). "
+        "Representan la banda alta del mercado: el precio al que los vendedores quieren "
+        "vender, no necesariamente el precio de cierre. Con n=7 retornos, el VAR "
+        "multivariado (10 variables) es estadisticamente inviable (n<<p), por lo que "
+        "se activa automaticamente el AR(1) univariado diagonal.\n\n"
+        "SET B - DATOS OFICIALES AYUNTAMIENTO DE BARCELONA:\n"
+        "Estadisticas oficiales del Portal de Dades del Ajuntament de Barcelona. "
+        "Venta: 2012-2025 (14 anos, n=13 retornos). Alquiler: 2000-2025 (26 anos). "
+        "Son precios de transaccion real. Con n=13 retornos de venta y p=10 variables, "
+        "el VAR(1) multivariado completo con regularizacion Ridge es estadisticamente "
+        "viable y se activa automaticamente.\n\n"
+        "ESTIMACION ADAPTATIVA (novedad v33):\n"
+        "El motor detecta si n_retornos_venta >= 10. Si si: VAR(1) Ridge (lambda=0.5). "
+        "Si no: AR(1) diagonal truncado a [-0.35, +0.35]. Esta deteccion garantiza que "
+        "el metodo estadistico sea siempre apropiado para el tamano muestral disponible.\n\n"
+        "ANO DEL SHOCK REGULATORIO CONFIGURABLE (novedad v33):\n"
+        "En v32, el shock VT se aplicaba siempre en 2029. En v33, el usuario puede "
+        "seleccionar 2028 o 2029, reflejando la incertidumbre sobre el calendario de "
+        "implementacion de las restricciones de licencias turisticas.\n\n"
+        f"Metodo activo en esta ejecucion: {modelo['metodo_var']}\n"
+        f"Radio espectral A_var: {modelo['rho_espectral']:.4f}\n"
+        f"n_sim configurado: {n_sim}"
     ))
+
+    # ---- SECCION 3: ARQUITECTURA ----
+    pdf.add_page()
+    pdf.set_font('Times','B',12)
+    pdf.cell(0,8,clean_str("3. ARQUITECTURA GENERAL DEL MODELO: VISION DE CONJUNTO"),0,1)
+    pdf.set_font('Times','',10)
+    pdf.multi_cell(0,5.5,clean_str(
+        "El modelo v33.0 es un sistema de ecuaciones diferenciales estocasticas discretas "
+        "(SDE discreta) con cuatro capas metodologicas interactuantes:\n\n"
+        "CAPA 1 - DRIFT ENDOGENO (AR(1)/VAR(1) adaptativo): el componente de tendencia de "
+        "cada distrito se estima automaticamente a partir de los retornos historicos "
+        "observados. El usuario NO introduce el drift directamente: emerge de los datos. "
+        "La novedad de v33 es la seleccion adaptativa del metodo segun la longitud de "
+        "la serie de datos disponible.\n\n"
+        "CAPA 2 - REGIMEN MACROECONOMICO (Markov no homogeneo): el estado macroeconomico "
+        "(Normal, Boom, Crisis) evoluciona segun una cadena de Markov cuyas probabilidades "
+        "de transicion se calculan dinamicamente en funcion de Euribor, IPC y Tasa de Paro. "
+        "La MTM no es fija: se recalcula en cada escenario (Hamilton 1994).\n\n"
+        "CAPA 3 - CORRELACION ESPACIAL DINAMICA (Cholesky + DCC simplificado): los shocks "
+        "estocasticos se generan con la estructura de correlacion historica entre distritos "
+        "(Cholesky). La correlacion se modula segun el estado del ciclo economico (DCC "
+        "simplificado): comprimida en expansion, convergente a 1 en crisis.\n\n"
+        "CAPA 4 - SHOCKS REGULATORIOS (Jump Process): impacto discreto de la restriccion "
+        "de licencias VT en el ano configurado (2028 o 2029), con magnitud proporcional "
+        "a la densidad de VT en cada distrito."
+    ))
+    pdf.ln(2)
+    pdf.set_font('Times','B',10)
+    pdf.cell(0,6,clean_str("Ecuacion gobernante consolidada:"),0,1)
     pdf.set_font('Courier','B',9)
     pdf.multi_cell(0,5,clean_str(
         "dP_i(t)/P_i(t) = [mu_hist_i + lambda*A_var*r(t-1) + f(E,I,P)] * gamma_i * dt\n"
-        "               + sigma_i(S_t) * SUM_j[L_ij(S_t)*dZ_j]\n"
-        "               + rho * R_alq(t-1)  +  J_VT(t,i,ano_shock)"
+        "               + sigma_i(S_t) * SUM_j[L_ij(S_t) * dZ_j(t)]\n"
+        "               + rho * R_alq(t-1)\n"
+        "               + J_VT(t, i, ano_shock)"
     ))
-    pdf.set_font('Times','',10)
-    pdf.multi_cell(0,5.5,clean_str(
-        "\nComponentes:\n"
-        "mu_hist_i    : drift historico por distrito (media retornos observados)\n"
-        "A_var        : AR(1) diagonal (n<10) o VAR(1) Ridge (n>=10)\n"
-        "lambda=0.15  : ponderacion del componente autoregresivo\n"
-        "f(E,I,P)     : ajuste diferencial Euribor/IPC/Paro al drift\n"
-        "gamma_i      : elasticidad distrital al ciclo\n"
-        "sigma_i(S_t) : volatilidad dinamica segun estado Markov\n"
-        "L_ij(S_t)    : Cholesky modulada por estado (DCC simplificado)\n"
-        "rho=0.45     : retroalimentacion alquiler->venta\n"
-        "J_VT(t,i)    : shock regulatorio en ano_shock (2028 o 2029) si activado"
+    pdf.set_font('Times','',9)
+    pdf.multi_cell(0,5,clean_str(
+        "Componentes:\n"
+        "mu_hist_i   : drift historico calibrado del distrito i\n"
+        "A_var       : AR(1) diagonal (n<10) o VAR(1) Ridge (n>=10), novedad v33\n"
+        "lambda=0.15 : ponderacion del componente autoregresivo\n"
+        "f(E,I,P)    : funcion de ajuste macro (Euribor, IPC, Paro)\n"
+        "gamma_i     : elasticidad distrital (sensibilidad al ciclo)\n"
+        "sigma_i(S_t): volatilidad dinamica segun estado Markov\n"
+        "L_ij(S_t)   : Cholesky modulada por estado (DCC simplificado)\n"
+        "rho=0.45    : coeficiente de retroalimentacion alquiler->venta\n"
+        "J_VT(t,i)   : salto regulatorio en t=ano_shock, proporcional a densidad VT"
     ))
 
-    # SECCION 3 — VAR Ridge
+    # ---- SECCION 4: DATOS ----
     pdf.add_page()
     pdf.set_font('Times','B',12)
-    pdf.cell(0,8,clean_str("3. ESTIMACION ADAPTATIVA: AR(1) vs VAR(1) RIDGE"),0,1)
+    pdf.cell(0,8,clean_str("4. DATOS DE ENTRADA: CALIBRACION Y FUENTES"),0,1)
     pdf.set_font('Times','',10)
     pdf.multi_cell(0,5.5,clean_str(
-        "AR(1) UNIVARIADO DIAGONAL (set Portales, n=7):\n"
+        "El modelo trabaja con dos tipos de datos:\n\n"
+        "A) PRECIOS HISTORICOS DISTRITALES: series de precios medios de venta (EUR/m2) "
+        "y alquiler (EUR/m2/mes) para los 10 distritos de Barcelona, con frecuencia anual. "
+        "Segun el set activo:\n"
+        "  - Set A (Portales/Idealista): venta 2019-2026, alquiler 2019-2026.\n"
+        "  - Set B (Ayuntamiento): venta 2012-2025 (14 datos), alquiler 2000-2025 (26 datos).\n\n"
+        "B) INDICE MACRO AGREGADO BCN (2007-2026): precio medio EUR/m2 a nivel ciudad, "
+        "necesario para calibrar las betas CAPM y reconstruir series historicas. "
+        "Fuente: INE (Indice de Precios de Vivienda).\n\n"
+        "PRECIOS DE VENTA SET A - 2026 (EUR/m2):\n"
+        "Ciutat Vella:4.811 | Eixample:6.363 | Gracia:5.404 | Horta Guinardo:3.905\n"
+        "Les Corts:6.355 | Nou Barris:2.946 | Sant Andreu:3.730 | Sant Marti:4.899\n"
+        "Sants-Montjuic:4.477 | Sarria-Sant Gervasi:6.896\n\n"
+        "PRECIOS DE VENTA SET B - 2025 (EUR/m2):\n"
+        "Ciutat Vella:4.144 | Eixample:5.325 | Gracia:4.814 | Horta Guinardo:3.464\n"
+        "Les Corts:5.100 | Nou Barris:3.005 | Sant Andreu:3.505 | Sant Marti:4.138\n"
+        "Sants-Montjuic:3.869 | Sarria-Sant Gervasi:5.629\n\n"
+        "DENSIDAD VT (fuente Inside Airbnb / CEAT):\n"
+        "Eixample:0.460 | Ciutat Vella:0.150 | Sant Marti:0.120 | Sants:0.110 |\n"
+        "Gracia:0.105 | Sarria:0.050 | Les Corts:0.035 | Horta:0.030 |\n"
+        "Sant Andreu:0.015 | Nou Barris:0.004"
+    ))
+
+    # ---- SECCION 5: BETA CAPM ----
+    pdf.add_page()
+    pdf.set_font('Times','B',12)
+    pdf.cell(0,8,clean_str("5. CALIBRACION DE ELASTICIDADES: BETA CAPM"),0,1)
+    pdf.set_font('Times','',10)
+    pdf.multi_cell(0,5.5,clean_str(
+        "La elasticidad de cada distrito al ciclo general del mercado barcelones se "
+        "cuantifica mediante el coeficiente Beta del modelo CAPM adaptado al sector "
+        "inmobiliario, siguiendo la metodologia de Shiller (1993):\n\n"
+        "   Beta_i = Cov(r_i, r_M) / Var(r_M)\n\n"
+        "Donde r_i es el retorno anual del precio de venta del distrito i y r_M es el "
+        "retorno del indice agregado de Barcelona. La estimacion se realiza sobre los "
+        "retornos observados en el periodo disponible del set activo.\n\n"
+        "Los betas se truncan al intervalo [0.5, 1.5] para evitar valores extremos no "
+        "plausibles economicamente. Un beta de 0.5 implicaria que cuando el mercado "
+        "barcelones cae un 10%, el distrito solo cae un 5% (mercado defensivo). Un beta "
+        "de 1.5 implicaria una caida del 15% (mercado altamente ciclico).\n\n"
+        "INTERPRETACION ECONOMICA:\n"
+        "- Beta alto (Eixample, Ciutat Vella): alta rotacion, componente especulativo "
+        "y turismo elevados. Amplificadores del ciclo.\n"
+        "- Beta bajo (Nou Barris, Sant Andreu): demanda residencial estable, menor "
+        "especulacion y mayor rigidez de precios a la baja.\n\n"
+        "RECONSTRUCCION HISTORICA 2007-INICIO: para los anos anteriores al inicio del "
+        "set de datos distrital, los precios se reconstruyen invirtiendo el modelo CAPM:\n"
+        "   P_i(t) = P_i(t+1) / (1 + Beta_i * r_M(t) + epsilon)\n"
+        "Con epsilon ~ N(0, 0.003) y seed=999 para reproducibilidad.\n"
+        "Esta reconstruccion sirve exclusivamente para estimar la matriz de correlacion "
+        "Cholesky; no se usa para el drift del modelo.\n\n"
+        f"Betas calibrados (set activo): min={modelo['betas'].min():.3f} "
+        f"max={modelo['betas'].max():.3f}"
+    ))
+
+    # ---- SECCION 6: DRIFT ----
+    pdf.add_page()
+    pdf.set_font('Times','B',12)
+    pdf.cell(0,8,clean_str("6. DRIFT ENDOGENO: RETORNOS HISTORICOS Y AJUSTE MACRO"),0,1)
+    pdf.set_font('Times','',10)
+    pdf.multi_cell(0,5.5,clean_str(
+        "El drift (tendencia) no lo fija el usuario: emerge de los propios datos "
+        "historicos del mercado. Esta es una caracteristica clave del modelo desde v32, "
+        "mantenida y reforzada en v33.\n\n"
+        "DRIFT HISTORICO BASE (mu_hist_i):\n"
+        "Se calcula como la media aritmetica simple de los retornos anuales observados "
+        "para cada distrito en el periodo disponible del set activo:\n"
+        "   mu_hist_i = (1/T) * SUM_t [(P_i(t)/P_i(t-1)) - 1]\n\n"
+        "AJUSTE MACRO AL DRIFT:\n"
+        "Sobre el drift endogeno se aplica un ajuste adicional por indicadores macro:\n"
+        "   delta_venta    = -clip((Euribor - 2.5)/100, -0.02, 0.04)\n"
+        "   delta_alquiler = +clip((Euribor - 2.5)/100*0.4, -0.01, 0.02)\n"
+        "   delta_comun    =  clip((IPC - 2.0)/100, -0.03, 0.03)\n"
+        "   delta_paro     = -clip((Paro - 10.0)/100*0.5, -0.02, 0.03)\n\n"
+        "El efecto Euribor es asimetrico: comprime el drift de venta (menos compradores "
+        "solventes con capacidad hipotecaria) pero eleva el drift de alquiler "
+        "(desplazamiento de demanda hacia arrendamiento). Este canal de transmision esta "
+        "documentado empiricamente en el mercado espanol post-2022.\n\n"
+        f"Drift historico venta calibrado (set activo):\n"
+        f"{(modelo['drift_venta']*100).round(2)} %/ano"
+    ))
+
+    # ---- SECCION 7: AR1 vs VAR1 ----
+    pdf.add_page()
+    pdf.set_font('Times','B',12)
+    pdf.cell(0,8,clean_str("7. ESTIMACION ADAPTATIVA: AR(1) DIAGONAL vs VAR(1) RIDGE"),0,1)
+    pdf.set_font('Times','',10)
+    pdf.multi_cell(0,5.5,clean_str(
+        "Esta seccion detalla la principal innovacion metodologica de v33: la seleccion "
+        "adaptativa del metodo de estimacion autoregresiva segun la disponibilidad "
+        "estadistica de datos. En v32, se intentaba siempre VAR multivariado, lo que "
+        "producia matrices explosivas con muestras cortas.\n\n"
+        "AR(1) UNIVARIADO DIAGONAL (set Portales, n=7 retornos):\n"
         "Con 7 retornos anuales y 10 variables, el VAR multivariado OLS es "
-        "estadisticamente inviable (n<<p, radio espectral explosivo > 2). "
-        "La solucion correcta es el AR(1) univariado:\n"
-        "   rho_i = Cov(r_i(t), r_i(t-1)) / Var(r_i(t-1)), truncado a [-0.35, 0.35]\n"
-        "A_var = diag(rho_1,...,rho_10). Radio espectral <= 0.35 garantizado.\n\n"
+        "estadisticamente inviable (n<<p): los estimadores tienen varianza muy elevada "
+        "y el radio espectral puede superar 2, produciendo simulaciones explosivas. "
+        "La solucion correcta es el AR(1) univariado por distrito:\n"
+        "   rho_i = Cov(r_i(t), r_i(t-1)) / Var(r_i(t-1)), truncado a [-0.35, +0.35]\n"
+        "   A_var = diag(rho_1, ..., rho_10)\n"
+        "Radio espectral <= 0.35 garantizado matematicamente.\n\n"
         "VAR(1) MULTIVARIADO CON REGULARIZACION RIDGE (set Ayuntamiento, n=13):\n"
         "Con 13 retornos y 10 variables (n>p), el VAR es estadisticamente viable. "
-        "Para mayor estabilidad se usa regularizacion Ridge (L2) con lambda=0.5:\n"
+        "Se usa regularizacion Ridge (L2) con lambda=0.5 (Hoerl & Kennard 1970):\n"
         "   A_ridge = (X'X + lambda*I)^{-1} X'Y\n"
-        "Esta penalizacion encoge los coeficientes hacia cero, reduciendo el "
-        "sobreajuste y garantizando un radio espectral controlado. Si el radio "
-        "espectral resultante supera 0.85, se reescala A_var = A_var * (0.85/rho).\n"
-        "El VAR captura interdependencias entre distritos: si Eixample tuvo retorno "
-        "elevado en t-1, esto puede predecir retornos en Gracia en t (efecto "
-        "desbordamiento geografico documentado en Barcelona).\n\n"
+        "Esta penalizacion encoge los coeficientes hacia cero, reduciendo sobreajuste "
+        "y garantizando radio espectral controlado. Si el radio espectral resultante "
+        "supera 0.85, se reescala: A_var = A_var * (0.85 / rho_espectral).\n"
+        "El VAR captura interdependencias entre distritos (efecto desbordamiento "
+        "geografico documentado en Barcelona).\n\n"
         f"Metodo activo en esta ejecucion: {modelo['metodo_var']}\n"
-        f"Radio espectral: {modelo['rho_espectral']:.4f}"
+        f"Radio espectral final: {modelo['rho_espectral']:.4f}\n"
+        f"n_retornos_venta disponibles: {modelo['n_ret_venta']}"
     ))
 
-    # SECCION 4 — Shock ano
+    # ---- SECCION 8: MARKOV ----
     pdf.add_page()
     pdf.set_font('Times','B',12)
-    pdf.cell(0,8,clean_str("4. SHOCK REGULATORIO VT: AÑO CONFIGURABLE"),0,1)
+    pdf.cell(0,8,clean_str("8. INDICADORES MACRO Y CADENA DE MARKOV NO HOMOGENEA"),0,1)
+    pdf.set_font('Times','',10)
+    pdf.multi_cell(0,5.5,clean_str(
+        "CADENA DE MARKOV NO HOMOGENEA (formulacion Hamilton 1994):\n"
+        "En lugar de P(S_{t+1}=j | S_t=i) = constante, el modelo implementa:\n"
+        "   P(S_{t+1}=j | S_t=i, Z_t) = f(Z_t)_ij\n"
+        "Donde Z_t = (Euribor_t, IPC_t, Paro_t). La MTM no es fija sino que se "
+        "recalcula dinamicamente en cada escenario.\n\n"
+        "FUNCION DE PROBABILIDADES DE REGIMEN (softmax):\n"
+        "   Score_Boom   = (1-Euribor_norm)*0.4 + (1-Paro_norm)*0.4 + IPC_cuadr.*0.2\n"
+        "   Score_Crisis = Euribor_norm*0.45 + Paro_norm*0.45 + excess_IPC*0.10\n"
+        "   Score_Normal = 0.5 (referencia)\n"
+        "   P(regimen) = softmax([Score_Normal, Score_Boom, Score_Crisis], T=2.5)\n\n"
+        "Normalizacion: Euribor [0%-5%] | IPC [0%-8%] | Paro [5%-30%]\n\n"
+        "CONSTRUCCION DE LA MTM:\n"
+        "A partir de P(regimen) = [p_norm, p_boom, p_crisis], se construye la MTM "
+        "con PERSIST=0.55 (factor de inercia del ciclo economico). Cada fila se "
+        "renormaliza para sumar 1.0 exactamente.\n\n"
+        "LOGICA ECONOMICA VERIFICADA:\n"
+        "- Euribor=1.5%, Paro=9%:  P(Boom) elevada -> reproduce ciclo 2015-2019.\n"
+        "- Euribor=3.8%, Paro=13%: P(Normal) domina -> reproduce estanflacion 2022-2024.\n"
+        "- Euribor=2.5%, Paro=20%: P(Crisis) elevada -> reproduce recesion 2011-2014.\n\n"
+        f"MTM activa para este escenario ({params['regimen']}):\n"
+        f"Euribor={params['euribor']}%, IPC={params['ipc']}%, Paro={params['paro']}%\n"
+        f"P(Normal)={probs_met[0]*100:.1f}% | P(Boom)={probs_met[1]*100:.1f}% | "
+        f"P(Crisis)={probs_met[2]*100:.1f}%"
+    ))
+
+    # ---- SECCION 9: MOTOR MC ----
+    pdf.add_page()
+    pdf.set_font('Times','B',12)
+    pdf.cell(0,8,clean_str("9. MOTOR MONTE CARLO: ALGORITMO COMPLETO"),0,1)
+    pdf.set_font('Times','',10)
+    pdf.multi_cell(0,5.5,clean_str(
+        f"El motor realiza n_sim={n_sim} simulaciones independientes de trayectorias "
+        f"de precios desde {ds['ano_fin']+1} hasta 2032. "
+        "np.random.seed(42) garantiza reproducibilidad exacta para identicos parametros.\n"
+    ))
+    pdf.set_font('Courier','',8)
+    pdf.multi_cell(0,4.5,clean_str(
+        "PARA sim = 1,...,n_sim:\n"
+        "  p_vta  = precio_venta_base.copy()\n"
+        "  p_alq  = precio_alquiler_base.copy()\n"
+        "  estado = 0 (Normal)\n"
+        "  r_prev = drift_historico_venta\n"
+        "  PARA t = ano_base+1, ..., 2032:\n"
+        "    1. TRANSICION MARKOV NO HOMOGENEA:\n"
+        "       u ~ Uniform(0,1); estado = sample(MTM[estado,:], u)\n"
+        "    2. DRIFT ENDOGENO:\n"
+        "       var_comp = lambda(0.15) * A_var @ r_prev\n"
+        "       drift_v  = mu_hist + var_comp + f_macro(Euribor,IPC,Paro)\n"
+        "    3. MODULACION POR ESTADO MARKOV:\n"
+        "       SI Boom:   tasa_v = drift_v * 1.35 + N(0, 0.008)\n"
+        "       SI Crisis: tasa_v = -|drift_v|*0.6 - 0.015 + N(0, 0.012)\n"
+        "       SI Normal: tasa_v = drift_v + N(0, 0.008)\n"
+        "    4. ELASTICIDAD DISTRITAL: tasa_v *= gamma_i\n"
+        "    5. DCC SIMPLIFICADO (Cholesky dinamica):\n"
+        "       vol_dyn, L_dyn = f(estado); Z ~ N(0,I); eps = L_dyn @ Z\n"
+        "       tasa_v += vol_dyn * eps\n"
+        "    6. FLOOR VOLATILIDAD: tasa_v >= -7% anual\n"
+        "    7. FLOOR YIELD (min 2.5% bruto):\n"
+        "       resist = clip(yield_bruto/0.025, 0.5, 1.0)\n"
+        "       tasa_v = where(tasa_v>0, tasa_v*resist, tasa_v)\n"
+        "    8. FEEDBACK ALQUILER->VENTA (si i > 0):\n"
+        "       tasa_v += rho(0.45) * ret_alq(t-1)\n"
+        "    9. SHOCK REGULATORIO (si activado y t=ano_shock):\n"
+        "       tasa_v += -0.10 * (D_i / D_max)\n"
+        "   10. ACTUALIZAR PRECIOS:\n"
+        "       p_vta *= (1+tasa_v); p_alq *= (1+tasa_a)\n"
+        "FIN SIMULACION\n"
+        "RESULTADOS: percentiles P10, P50, P90 por distrito y periodo"
+    ))
+
+    # ---- SECCION 10: CHOLESKY ----
+    pdf.add_page()
+    pdf.set_font('Times','B',12)
+    pdf.cell(0,8,clean_str("10. CORRELACION ESPACIAL: DESCOMPOSICION DE CHOLESKY"),0,1)
+    pdf.set_font('Times','',10)
+    pdf.multi_cell(0,5.5,clean_str(
+        "MOTIVACION ECONOMICA:\n"
+        "Los mercados de distritos adyacentes o similares comparten factores de demanda "
+        "(mismo mercado laboral central, mismas infraestructuras de transporte, oleadas "
+        "de gentrificacion). Un modelo con shocks independientes subestimaria el riesgo "
+        "sistematico: cuando Eixample cae, Gracia tiende a caer tambien.\n\n"
+        "METODOLOGIA:\n"
+        "1. Se estima la matriz de correlacion Sigma sobre retornos de la serie "
+        "   reconstruida 2007-ano_fin.\n"
+        "2. Descomposicion: Sigma = L * L^T (L triangular inferior).\n"
+        "3. Shocks correlacionados: eps = L * Z, Z ~ N(0, I_n), "
+        "   garantizando eps ~ N(0, Sigma).\n\n"
+        "CORRECCION ESPECTRAL (si Sigma no es definida positiva):\n"
+        "   Sigma_corr = V * diag(max(lambda_i, 1e-8)) * V^T, renormalizada.\n"
+        "Garantiza que la Cholesky siempre sea factible sin alterar "
+        "significativamente la estructura de correlacion estimada.\n\n"
+        "VALIDACION: es_lower_triangular, diagonal_positiva, "
+        "L*L^T aprox Sigma (error max < 1e-4)."
+    ))
+
+    # ---- SECCION 11: DCC ----
+    pdf.add_page()
+    pdf.set_font('Times','B',12)
+    pdf.cell(0,8,clean_str("11. VOLATILIDAD DINAMICA: DCC SIMPLIFICADO"),0,1)
+    pdf.set_font('Times','',10)
+    pdf.multi_cell(0,5.5,clean_str(
+        "MOTIVACION:\n"
+        "Evidencia empirica documenta dos fenomenos: (1) la volatilidad se incrementa "
+        "en contracciones (efecto GARCH), y (2) las correlaciones entre activos "
+        "convergen hacia 1 durante los crash (DCC, Engle 2002). Un modelo con "
+        "volatilidad y correlacion constantes subestima el riesgo adverso.\n\n"
+        "IMPLEMENTACION SEGUN ESTADO MARKOV:\n\n"
+        "ESTADO BOOM:\n"
+        "  - Volatilidad: sigma_dyn = sigma_calibrada * 0.85\n"
+        "  - Correlacion: Sigma_dyn = Sigma_hist*0.8 + I*0.2 (mercados se diferencian)\n\n"
+        "ESTADO NORMAL:\n"
+        "  - Volatilidad: sigma_dyn = sigma_calibrada\n"
+        "  - Correlacion: Sigma_dyn = Sigma_historica\n\n"
+        "ESTADO CRISIS:\n"
+        "  - Volatilidad: sigma_dyn = sigma_calibrada * 1.60 (factor calibrado en 2008)\n"
+        "  - Correlacion: Sigma_dyn = Sigma_hist*0.5 + 1_matriz*0.5\n"
+        "    (todo cae junto en crisis)\n"
+        "  - Se recalcula Cholesky de Sigma_dyn en cada periodo.\n\n"
+        "DIFERENCIA CON DCC COMPLETO (Engle 2002):\n"
+        "El DCC completo requiere series largas (>100 obs) para estimar GARCH. "
+        "Con n<=13 periodos disponibles, esta estimacion seria inestable. "
+        "El enfoque simplificado captura la logica esencial del DCC siendo "
+        "estadisticamente honesto con la disponibilidad de datos."
+    ))
+
+    # ---- SECCION 12: SHOCK VT ----
+    pdf.add_page()
+    pdf.set_font('Times','B',12)
+    pdf.cell(0,8,clean_str("12. FUNCION DE SHOCK REGULATORIO (JUMP PROCESS)"),0,1)
     pdf.set_font('Times','',10)
     shock_txt = (f"ACTIVADO en {params.get('shock_ano',2029)}"
                  if params.get('shock_vt') else "DESACTIVADO")
     pdf.multi_cell(0,5.5,clean_str(
         f"Estado del shock en este escenario: {shock_txt}\n\n"
-        "El shock regulatorio modela el impacto de la restriccion de licencias "
-        "de vivienda turistica (VT) sobre los precios de venta y alquiler. "
-        "Se implementa como proceso de salto discreto (Jump Process) activado "
-        "en el ano configurado por el usuario (2028 o 2029), reflejando la "
-        "incertidumbre sobre el calendario de implementacion efectiva.\n\n"
-        "Funcion de impacto:\n"
-        "   J_vt(i) = -0.10 * (D_i / D_max) sobre precio de venta\n"
-        "   J_alq(i) = -0.06 * (D_i / D_max) sobre precio de alquiler\n\n"
-        "D_i = densidad VT distrital, D_max = 0.46 (Eixample).\n"
-        "La eleccion de 2028 o 2029 permite modelizar escenarios de adelanto o "
-        "retraso regulatorio sin modificar la magnitud del impacto."
+        "CANAL ECONOMICO:\n"
+        "Las licencias VT crean demanda adicional de compra no residencial: inversores "
+        "que adquieren pisos para alquiler turistico obtienen rentabilidad superior, "
+        "elevando precios de venta en zonas de alta densidad VT. La restriccion "
+        "suprime esta demanda, produciendo una correccion proporcional a la densidad.\n\n"
+        "NOVEDAD V33 - ANO CONFIGURABLE (2028 o 2029):\n"
+        "En v32 el shock era siempre en 2029. En v33 el usuario selecciona el ano, "
+        "reflejando la incertidumbre real sobre el calendario de implementacion.\n\n"
+        "ESPECIFICACION MATEMATICA (Jump Process):\n"
+        "   J_vt(i) = -0.10 * (D_i / D_max)  [impacto sobre venta]\n"
+        "   J_alq(i) = -0.06 * (D_i / D_max) [impacto sobre alquiler]\n"
+        "D_i = densidad VT distrital, D_max = 0.46 (Eixample).\n\n"
+        "Impactos resultantes:\n"
+        "Eixample (0.460): venta -10.0%, alquiler -6.0%\n"
+        "Ciutat Vella (0.150): venta -3.3%, alquiler -2.0%\n"
+        "Sant Marti (0.120): venta -2.6%, alquiler -1.6%\n"
+        "Sants-Montjuic (0.110): venta -2.4%, alquiler -1.4%\n"
+        "Gracia (0.105): venta -2.3%, alquiler -1.4%\n"
+        "Sarria-Sant Gervasi (0.050): venta -1.1%, alquiler -0.7%\n"
+        "Les Corts (0.035): venta -0.8%, alquiler -0.5%\n"
+        "Horta Guinardo (0.030): venta -0.7%, alquiler -0.4%\n"
+        "Sant Andreu (0.015): venta -0.3%, alquiler -0.2%\n"
+        "Nou Barris (0.004): venta -0.1%, alquiler -0.1% (practicamente inmune)\n\n"
+        "La recuperacion post-shock es gradual a traves del mecanismo de "
+        "retroalimentacion alquiler-venta y el drift historico."
     ))
 
-    # SECCION 5 — Tests
+    # ---- SECCION 13: RETROALIMENTACION ----
     pdf.add_page()
     pdf.set_font('Times','B',12)
-    pdf.cell(0,8,clean_str("5. TESTS DE INTEGRIDAD MATEMATICA"),0,1)
+    pdf.cell(0,8,clean_str("13. RETROALIMENTACION ALQUILER-VENTA (CANAL rho)"),0,1)
+    pdf.set_font('Times','',10)
+    pdf.multi_cell(0,5.5,clean_str(
+        "Los mercados de venta y alquiler estan conectados a traves del yield de "
+        "rentabilidad bruta. Un incremento sostenido de los alquileres eleva la "
+        "rentabilidad del activo como inversion de renta, atrayendo nueva demanda "
+        "compradora y presionando al alza los precios de venta.\n\n"
+        "CANAL ALQUILER -> VENTA:\n"
+        "   tasa_venta(t) += rho * [(Alquiler(t-1)/Alquiler(t-2)) - 1]\n"
+        "Con rho=0.45, calibrado sobre la correlacion historica observada entre "
+        "retornos de alquiler y precio de venta con retardo de 1 periodo.\n\n"
+        "CANAL INVERSO - FLOOR YIELD (2.5% bruto):\n"
+        "Cuando el yield bruto (alquiler anual / precio venta) cae por debajo del 2.5%, "
+        "la tasa de crecimiento de los precios de venta se frena proporcionalmente:\n"
+        "   resist = clip(yield_bruto / 0.025, 0.5, 1.0)\n"
+        "   tasa_v = where(tasa_v > 0, tasa_v * resist, tasa_v)\n\n"
+        "Este mecanismo de ancla fundamental evita que los precios de venta crezcan "
+        "indefinidamente desconectados de los alquileres, manteniendo la viabilidad "
+        "economica como inversion de renta. No es mean-reversion directa, sino un "
+        "freno proporcional a la desconexion yield/precio."
+    ))
+
+    # ---- SECCION 14: AGREGACION ----
+    pdf.add_page()
+    pdf.set_font('Times','B',12)
+    pdf.cell(0,8,clean_str("14. AGREGACION ESTADISTICA Y PERCENTILES"),0,1)
+    pdf.set_font('Times','',10)
+    pdf.multi_cell(0,5.5,clean_str(
+        f"Las n_sim={n_sim} trayectorias simuladas producen una distribucion empirica "
+        "de precios para cada distrito y cada periodo de proyeccion.\n\n"
+        "P50 (MEDIANA): proyeccion central. Se usa la mediana para su mayor robustez "
+        "frente a trayectorias extremas. En distribuciones asimetricas como las de "
+        "precios inmobiliarios, la mediana es mas representativa que la media.\n\n"
+        "P10 / P90: percentiles que definen el intervalo de confianza al 80%. "
+        "P10 = escenario adverso (solo el 10% de simulaciones produce precios menores). "
+        "P90 = escenario optimista.\n\n"
+        "CAGR (Compound Annual Growth Rate): tasa de crecimiento anual compuesta "
+        "calculada sobre la media de la distribucion final:\n"
+        "   CAGR_i = (E[P_i(2032)] / P_i(ano_base))^(1/n_anos) - 1\n"
+        "Usado para el eje vertical del cuadrante Riesgo/Retorno.\n\n"
+        "CV (Coeficiente de Variacion): desviacion estandar / media de la distribucion "
+        "final. Proxy de riesgo. Mayor CV = mayor dispersion de resultados posibles. "
+        "Usado como eje horizontal del cuadrante Riesgo/Retorno."
+    ))
+
+    # ---- SECCION 15: LIMITACIONES ----
+    pdf.add_page()
+    pdf.set_font('Times','B',12)
+    pdf.cell(0,8,clean_str("15. LIMITACIONES DEL MODELO Y ADVERTENCIAS"),0,1)
+    pdf.set_font('Times','',10)
+    pdf.multi_cell(0,5.5,clean_str(
+        "El modelo v33.0 supone un avance respecto a v32 al introducir doble fuente "
+        "y estimacion adaptativa, pero mantiene estas limitaciones:\n\n"
+        "1. MUESTRA CORTA (set Portales, n=7): los estimadores de drift y volatilidad "
+        "tienen alta varianza. La seleccion adaptativa hacia AR(1) compensa para el "
+        "componente autoregresivo, pero los IC internos siguen siendo amplios.\n\n"
+        "2. MUESTRA MODERADA (set Ayuntamiento, n=13): el VAR Ridge es viable pero "
+        "los estimadores siguen siendo ruidosos. Ridge introduce sesgo controlado.\n\n"
+        "3. DATOS DE OFERTA AUSENTES: el modelo no incorpora nueva construccion, "
+        "rehabilitacion ni cambios de uso del suelo.\n\n"
+        "4. LINEARIDAD DEL AJUSTE MACRO: f(Euribor, IPC, Paro) es lineal. Los "
+        "efectos reales pueden ser no lineales (efectos umbral).\n\n"
+        "5. DCC SIMPLIFICADO: aproximacion del DCC real (Engle 2002). Sin GARCH.\n\n"
+        "6. SEED FIJA (np.random.seed(42)): garantiza reproducibilidad exacta pero "
+        "implica que identicos parametros producen identicos resultados.\n\n"
+        "7. HORIZONTE 6 ANOS: incertidumbre acumulada considerable. Las bandas "
+        "P10-P90 pueden representar el 30-40% del precio central en ano 5-6.\n\n"
+        "CLASIFICACION DEL MODELO: herramienta de analisis estrategico de inversion. "
+        "No es un modelo de valoracion-tasacion ni debe usarse para decisiones de "
+        "credito hipotecario individual."
+    ))
+
+    # ---- SECCION 16: TESTS ----
+    pdf.add_page()
+    pdf.set_font('Times','B',12)
+    pdf.cell(0,8,clean_str("16. TESTS DE INTEGRIDAD MATEMATICA"),0,1)
+    pdf.set_font('Times','',10)
+    pdf.multi_cell(0,5.5,clean_str(
+        "El modelo incluye verificacion automatica ejecutada en cada inicializacion. "
+        "Los tests cubren: positividad de precios base, yields en rango plausible "
+        "[2%-12%], drift historico razonable (<30%/a), radio espectral del componente "
+        "autoregresivo, betas CAPM en [0.5, 1.5], descomposicion Cholesky valida, "
+        "y MTM dinamicas con filas que suman 1.0 exactamente.\n"
+    ))
     pdf.set_font('Courier','',8)
     test_res = run_tests(modelo, params['dataset_key'])
     for tname, tpass, tmsg in test_res:
         pdf.cell(0,5,clean_str(f"[{'PASS' if tpass else 'FAIL'}]  {tname}"),0,1)
         pdf.cell(0,4,clean_str(f"        {tmsg}"),0,1)
 
-    # SECCION 6 — Referencias
+    # ---- SECCION 17: REFERENCIAS ----
     pdf.add_page()
     pdf.set_font('Times','B',12)
-    pdf.cell(0,8,clean_str("6. REFERENCIAS"),0,1)
+    pdf.cell(0,8,clean_str("17. REFERENCIAS BIBLIOGRAFICAS Y NORMATIVAS"),0,1)
     pdf.set_font('Times','',9)
     refs = [
-        "Hamilton, J.D. (1989). A new approach to nonstationary time series. Econometrica.",
-        "Hamilton, J.D. (1994). Time Series Analysis. Princeton University Press.",
-        "Engle, R.F. (2002). Dynamic Conditional Correlation. JBES, 20(3), 339-350.",
-        "Sims, C.A. (1980). Macroeconomics and Reality. Econometrica, 48(1), 1-48.",
-        "Hoerl, A.E. & Kennard, R.W. (1970). Ridge Regression. Technometrics, 12(1), 55-67.",
-        "Sharpe, W.F. (1964). Capital asset prices. Journal of Finance, 19(3), 425-442.",
-        "Ajuntament de Barcelona (2025). Portal de Dades Obertes. portaldades.ajuntament.barcelona.cat",
-        "Idealista Research (2026). Informe de Precios Q1 2026. Madrid: Idealista.",
-        "Incasol - Institut Catala del Sol (2026). Estadistiques sector immobiliari.",
-        "INE (2026). Indice de Precios de Vivienda (IPV). Madrid: INE.",
-        "Ley 12/2023, de 24 de mayo, por el derecho a la vivienda. BOE num. 124.",
+        "Hamilton, J.D. (1989). A new approach to the economic analysis of nonstationary "
+        "time series and the business cycle. Econometrica, 57(2), 357-384.",
+        "Hamilton, J.D. (1994). Time Series Analysis. Princeton University Press. "
+        "[Markov Switching con variables exogenas]",
+        "Engle, R.F. (2002). Dynamic Conditional Correlation: A Simple Class of "
+        "Multivariate GARCH Models. Journal of Business & Economic Statistics, 20(3).",
+        "Sims, C.A. (1980). Macroeconomics and Reality. Econometrica, 48(1), 1-48. "
+        "[Referencia fundacional VAR]",
+        "Hoerl, A.E. & Kennard, R.W. (1970). Ridge Regression: Biased Estimation for "
+        "Nonorthogonal Problems. Technometrics, 12(1), 55-67. [Ridge, novedad v33]",
+        "Sharpe, W.F. (1964). Capital asset prices: A theory of market equilibrium "
+        "under conditions of risk. Journal of Finance, 19(3), 425-442.",
+        "Shiller, R.J. (1993). Measuring Asset Values for Cash Settlement in Derivative "
+        "Markets. Journal of Finance, 48(3), 911-931.",
+        "Case, K.E. & Shiller, R.J. (1989). The Efficiency of the Market for "
+        "Single-Family Homes. American Economic Review, 79(1), 125-137.",
+        "Glaeser, E. & Gyourko, J. (2018). The Economic Implications of Housing Supply. "
+        "Journal of Economic Perspectives, 32(1), 3-30.",
+        "Banco de Espana (2023). Informe de Estabilidad Financiera. Capitulo 2: "
+        "Vulnerabilidades del sector inmobiliario. Madrid: BdE.",
+        "Ajuntament de Barcelona (2025). Portal de Dades Obertes. "
+        "portaldades.ajuntament.barcelona.cat",
+        "Idealista Research (2026). Informe de Precios de Vivienda en Barcelona, "
+        "Q1 2026. Madrid: Idealista.",
+        "Incasol - Institut Catala del Sol (2026). Estadistiques del sector immobiliari "
+        "a Catalunya. Generalitat de Catalunya.",
+        "INE (2026). Indice de Precios de Vivienda (IPV). Serie historica 2007-2026. "
+        "Madrid: Instituto Nacional de Estadistica.",
+        "Ajuntament de Barcelona / CEAT (2024). Registre d Habitatges d Us Turistic. "
+        "Barcelona: Ajuntament de Barcelona.",
+        "Inside Airbnb (2024). Data for Barcelona, Spain. insideairbnb.com.",
+        "Ley 12/2023, de 24 de mayo, por el derecho a la vivienda. "
+        "Boletin Oficial del Estado, num. 124, 25 de mayo de 2023.",
+        "European Banking Authority (2023). EBA Report on Residential Real Estate "
+        "Risk Weighting and Methodologies. EBA/REP/2023/28.",
     ]
     for r in refs:
         pdf.multi_cell(0,5,clean_str(f"- {r}"))
         pdf.ln(1)
 
     return pdf.output(dest='S').encode('latin-1')
+
 
 
 # ============================================================================
