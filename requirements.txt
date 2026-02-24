@@ -1,13 +1,9 @@
-# UI y Framework
-streamlit>=1.30.0
+# Barcelona Strategic Model v40.0 — Requirements
+# Instalación: pip install -r requirements_v40.txt
 
-# Manipulación de datos y matemáticas
-numpy>=1.24.0
-pandas>=2.0.0
-
-# Visualización
-plotly>=5.18.0
-matplotlib>=3.8.0
-
-# Generación de informes PDF (versión moderna con soporte Unicode)
-fpdf2>=2.7.7
+streamlit>=1.32.0
+numpy>=1.26.0
+pandas>=2.2.0
+plotly>=5.20.0
+scipy>=1.12.0
+fpdf>=1.7.2
