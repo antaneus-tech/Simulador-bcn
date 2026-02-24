@@ -187,8 +187,8 @@ DATASET_B = {
     'fuente':     'Portal de Dades Ajuntament de Barcelona',
     'fecha_dato': '2025',
     'ano_fin':    2025,
-    'anos_venta': np.arange(2012, 2026),
-    'anos_alq':   np.arange(2000, 2026),
+    'anos_venta': np.arange(2012, 2025),
+    'anos_alq':   np.arange(2000, 2025),
     'venta':      _venta_ayto_canon,
     'alquiler':   _alq_ayto_canon,
 }
@@ -1618,3 +1618,4 @@ st.caption(
     f"Paro: {paro_val}% | Shock: {'ON (' + str(shock_ano) + ')' if shock_vt else 'OFF'} | "
     f"n_sim: {n_sim_ui}"
 )
+
