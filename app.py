@@ -129,6 +129,11 @@ h2, h3 {
 [data-testid="stSidebar"] * {
     color: #e8f0f4 !important;
 }
+/* Selectbox dropdown: texto oscuro sobre fondo blanco */
+[data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] span,
+[data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] div {
+    color: #1a2f3a !important;
+}
 
 /* Títulos sidebar */
 [data-testid="stSidebar"] h1,
@@ -2183,6 +2188,7 @@ st.caption(
     f"beta_vta: {modelo_act['beta_vta'].min():.2f}-{modelo_act['beta_vta'].max():.2f} | "
     f"beta_alq: {modelo_act['beta_alq'].min():.2f}-{modelo_act['beta_alq'].max():.2f}"
 )
+
 
 
 
