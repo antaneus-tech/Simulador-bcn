@@ -1,6 +1,13 @@
-streamlit
-numpy
-pandas
-matplotlib
-plotly
-fpdf
+# UI y Framework
+streamlit>=1.30.0
+
+# Manipulación de datos y matemáticas
+numpy>=1.24.0
+pandas>=2.0.0
+
+# Visualización
+plotly>=5.18.0
+matplotlib>=3.8.0
+
+# Generación de informes PDF (versión moderna con soporte Unicode)
+fpdf2>=2.7.7
