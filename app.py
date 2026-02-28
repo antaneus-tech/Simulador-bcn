@@ -12,10 +12,14 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
+try:
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as mpatches
+    MATPLOTLIB_OK = True
+except ImportError:
+    MATPLOTLIB_OK = False
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -129,7 +133,8 @@ h2, h3 {
 [data-testid="stSidebar"] * {
     color: #e8f0f4 !important;
 }
-/* Selectbox dropdown: texto oscuro sobre fondo blanco */
+
+/* Selectbox dropdown: texto oscuro sobre fondo blanco del widget */
 [data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] span,
 [data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] div {
     color: #1a2f3a !important;
