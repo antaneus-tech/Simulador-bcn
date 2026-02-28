@@ -1,5 +1,5 @@
 # ==============================================================================
-# BARCELONA STRATEGIC MODEL v40.0
+# BARCELONA STRATEGIC MODEL v40.1
 # ==============================================================================
 # Arquitectura SDE hibrida con Betas empiricas independientes (venta/alquiler),
 # arquitectura hibrida Set A/B, shock de regimen aditivo Phi(S,M) con asimetria
@@ -54,7 +54,7 @@ logger = logging.getLogger("BCNModelV40")
 # 1. CONFIGURACION VISUAL — Streamlit
 # ============================================================================
 st.set_page_config(
-    page_title="Barcelona Strategic Model v40.0",
+    page_title="Barcelona Strategic Model v40.1",
     page_icon="🏙️",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -1219,8 +1219,7 @@ with tab1:
     df_tab = pd.DataFrame(rows)
     st.dataframe(
         df_tab.set_index('Distrito')
-        .style.background_gradient(cmap='Greens', subset=['CAGR %'])
-        .format({'CAGR %': '{:.2f}%'}),
+        .style.format({'CAGR %': '{:.2f}%'}),
         use_container_width=True
     )
 
@@ -1277,9 +1276,7 @@ with tab2:
     st.dataframe(
         df_rr.style
         .format({'Retorno CAGR (%)': '{:.2f}%', 'Riesgo CV (%)': '{:.2f}%',
-                 'Venta P50 2032': '{:,}'})
-        .background_gradient(cmap="Greens", subset=["Retorno CAGR (%)"])
-        .background_gradient(cmap="Reds_r", subset=["Riesgo CV (%)"]),
+                 'Venta P50 2032': '{:,}'}),
         use_container_width=True
     )
 
@@ -1302,7 +1299,7 @@ with tab3:
             index=['Normal', 'Boom', 'Crisis'],
             columns=['→Normal', '→Boom', '→Crisis']
         )
-        st.dataframe(df_mtm.style.background_gradient(cmap='Blues'),
+        st.dataframe(df_mtm.style.format('{:.4f}'),
                      use_container_width=True)
         st.markdown(f"""
 **Parámetros Φ calibrados (Set B):**
@@ -1412,9 +1409,7 @@ with tab4:
             'σ_base %':              np.round(modelo_act['vol_cal'] * 100, 2),
         })
         st.dataframe(
-            df_betas_t4.set_index('Distrito')
-            .style.background_gradient(cmap='Blues',  subset=['β_vta (vs IPV INE)'])
-            .background_gradient(cmap='Greens', subset=['β_alq (vs Sint. BCN)']),
+            df_betas_t4.set_index('Distrito'),
             use_container_width=True
         )
         st.caption("Ambas betas desde Set B. β_vta: IPV INE como benchmark. β_alq: media simple 10 distritos.")
@@ -2193,7 +2188,6 @@ st.caption(
     f"beta_vta: {modelo_act['beta_vta'].min():.2f}-{modelo_act['beta_vta'].max():.2f} | "
     f"beta_alq: {modelo_act['beta_alq'].min():.2f}-{modelo_act['beta_alq'].max():.2f}"
 )
-
 
 
 
