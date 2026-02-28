@@ -1,9 +1,9 @@
-# Barcelona Strategic Model v40.0 — Requirements
+# Barcelona Strategic Model v40.1 — Requirements
 # Instalación: pip install -r requirements_v40.txt
 
 streamlit>=1.32.0
 numpy>=1.26.0
 pandas>=2.2.0
 plotly>=5.20.0
-scipy>=1.12.0
-fpdf>=1.7.2
+fpdf2>=2.7.9
+matplotlib>=3.8.0
