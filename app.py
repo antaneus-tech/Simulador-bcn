@@ -1066,11 +1066,12 @@ anos_proy_act = ap_act
 # 10. TABS PRINCIPALES
 # ============================================================================
 ds_activo  = DATASETS[ds_key]
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab_metodo, tab5 = st.tabs([
     "📍 Análisis Distrito",
     "⚖️ Riesgo / Retorno",
     "🔬 Macro & Φ",
     "🧮 Parámetros v40",
+    "📚 Método (Ecuaciones)",
     "✅ Tests",
 ])
 
@@ -1465,6 +1466,128 @@ with tab4:
         })
         st.dataframe(df_drift_comp.set_index('Distrito'), use_container_width=True)
 
+# ============================================================================
+# TAB MÉTODO — ECUACIONES DEL MODELO SDE E INFORME METODOLÓGICO
+# ============================================================================
+with tab_metodo:
+    st.markdown(r"""
+# Informe Metodológico Exhaustivo: Barcelona Strategic Model v40.1
+
+**Objetivo:** Desglose técnico y matemático completo de las Ecuaciones Diferenciales Estocásticas (SDE), procesos de decisión de Markov y formulaciones empíricas del modelo predictivo inmobiliario.
+
+---
+
+## 1. Fundamentos del Entorno Macroeconómico ($M_t$)
+
+El motor principal que dirige el ciclo de mercado se llama **Impulso Macro ($M_t$)**, calculado de forma diferente para el mercado de Venta y Alquiler debido a la naturaleza asimétrica de la demanda cruzada.
+
+### A. Impulso Macro para Venta ($M_{t, vta}$)
+Penaliza las subidas de los tipos de interés y el paro, pero asume una inflación contenida como proxy de salud transaccional:
+$$M_{t, vta} = - \text{clip}\left(\frac{\text{Euribor} - 2.5}{100}, -0.02, 0.04\right) + \text{clip}\left(\frac{\text{IPC} - 2.0}{100}, -0.03, 0.03\right) - \text{clip}\left(\frac{\text{Paro} - 10.0}{100} \cdot 0.5, -0.02, 0.03\right)$$
+*(Un $M_t > 0$ incentiva el ciclo, $M_t < 0$ lo deprime).*
+
+### B. Impulso Macro para Alquiler ($M_{t, alq}$)
+El Euribor tiene aquí un signo inverso. Tipos altos restringen el acceso crediticio a la venta, desviando estructuralmente esa demanda hacia el alquiler, lo que incrementa los precios por shock de demanda:
+$$M_{t, alq} = + \text{clip}\left(\frac{\text{Euribor} - 2.5}{100} \cdot 0.4, -0.01, 0.02\right) + \text{clip}\left(\frac{\text{IPC} - 2.0}{100} \cdot 0.6, -0.02, 0.02\right) - \text{clip}\left(\frac{\text{Paro} - 10.0}{100} \cdot 0.3, -0.01, 0.02\right)$$
+
+---
+
+## 2. Régimen Predictivo de Markov No Homogéneo
+
+El algoritmo evalúa iterativamente 3 estados estocásticos discretos $S_t \in \{\text{0: Normal, 1: Boom, 2: Crisis}\}$. Primero calcula un "score" probabilístico normalizando las tres variables macro (Euribor, IPC, Paro):
+
+$$E_{norm} = \text{clip}\left(\frac{\text{Euribor}}{5.0}, 0, 1\right)$$
+$$I_{norm} = \text{clip}\left(\frac{\text{IPC}}{8.0}, 0, 1\right)$$
+$$P_{norm} = \text{clip}\left(\frac{\text{Paro} - 5.0}{25.0}, 0, 1\right)$$
+
+Se generan los puntajes (scores) brutos para cada régimen:
+$$U_{norm} = 0.5$$
+$$U_{boom} = (1 - E_{norm}) \cdot 0.4 + (1 - P_{norm}) \cdot 0.4 + \text{clip}\left( I_{norm}(1 - I_{norm}) \cdot 4, 0, 1\right) \cdot 0.2$$
+$$U_{crisis} = E_{norm} \cdot 0.45 + P_{norm} \cdot 0.45 + \text{clip}(I_{norm} - 0.5, 0, 0.5) \cdot 0.1$$
+
+Las probabilidades de estado $P(S)$ se consiguen a través de una función *Softmax* aplacada:
+$$P(S_i) = \frac{\exp(U_{S_i} \cdot 2.5)}{\sum_{j \in \{norm, boom, crisis\}} \exp(U_{S_j} \cdot 2.5)}$$
+
+Estas actúan sobre una **Matriz de Transición de Markov ($MTM$)** interanual (con persistencia $PER=0.55$):
+$$
+\mathbf{MTM} = 
+\begin{bmatrix}
+PER + (1-PER)P_{norm} & (1-PER)P_{boom} & (1-PER)P_{crisis} \\
+0.35(1-P_{boom}) & PER + (1-PER)P_{boom} & 0.05 + 0.10 P_{crisis} \\
+0.12 + 0.20 P_{norm} & 0.02 & PER + (1-PER)P_{crisis}
+\end{bmatrix}
+$$
+
+---
+
+## 3. Calibración Empírica del Shock $\Phi(S_t, M_t)$
+
+El algoritmo extrae históricamente, por OLS, multiplicadores ($\kappa$) y aditividades ($C$) asimétricos sobre ventanas empíricas "Boom" y "Crisis":
+
+$$
+\Phi_v(S_t, M_{t, vta}) = 
+\begin{cases} 
+M_{t, vta} & \text{si } S_t = \text{Normal} \\
+M_{t, vta} \cdot \kappa_{boom} + C_{boom} & \text{si } S_t = \text{Boom} \\
+\min(M_{t, vta}, 0) \cdot \kappa_{crisis} + \max(M_{t, vta}, 0) \cdot 1.0 - C_{crisis} & \text{si } S_t = \text{Crisis} 
+\end{cases}
+$$
+
+*Para alquiler la volatilidad se atenúa un $30\% - 40\%$*:
+$$\Phi_{a} \to M_{t, alq} \cdot (\kappa \cdot 0.7) + (C \cdot 0.6)$$
+
+---
+
+## 4. Motor VAR(1) e Inercia Endógena (Ridge)
+
+$$A_{var} = \left( X^T X + \lambda_{var\_ridge} \cdot \mathbf{I} \right)^{-1} X^T Y$$
+Donde $\lambda_{var\_ridge} = 0.5$ estabiliza los pequeños tamaños muestrales (Regularización de Tikhonov).
+
+---
+
+## 5. Simulación Estocástica y Dynamic Conditional Correlation (SDE)
+
+### A. Matrices DCC por Régimen
+* **Boom:** La volatilidad desciende orgánicamente ($\sigma_{dyn} = \sigma_{base} \cdot 0.85$) y la correlación cruzada pierde fuerza hacia un comportamiento general barcelonés de crecimiento ($\mathbf{Corr}_{dyn} = \mathbf{Corr}_{base} \cdot 0.8 + \mathbf{I} \cdot 0.2$).
+* **Crisis:** La incertidumbre explota ($\sigma_{dyn} = \sigma_{base} \cdot 1.60$), y el efecto sistémico obliga a que las correlaciones converjan trágicamente a $1.0$ (todos caen juntos) con modelo $0.5 + 0.5\cdot J$.
+* Construcción estocástica ortogonal: $L_{dyn} = \text{Cholesky}(\mathbf{Corr}_{dyn})$.
+
+### B. Ecuaciones Estocásticas Diferenciales (Integración Iterativa)
+El núcleo del cálculo interanual avanza sumando los cuatro sub-vectores analíticos principales ($t$ representa un salto de año):
+
+**1. Dinámica Estocástica Venta ($r_{vta, t}$):**
+$$
+r_{vta, t} = 
+\underbrace{\mu_{vta} + \lambda_{var} \left[ A_{var} \cdot \vec{r}_{prev} \right]}_{\text{Inercia Histórica}} 
++ 
+\underbrace{\beta_{vta} \cdot \Phi_v(S_t, M_{t, vta})}_{\text{Ajuste al Ciclo}} 
++ 
+\underbrace{\sigma_{dyn} \cdot \left[ L_{dyn} \cdot \vec{Z} \right]}_{\text{Ruido Blanco Cíclico}}
++
+\underbrace{\rho_{vta, alq} \cdot \text{clip}(r_{alq, t-1}, -0.05, 0.05)}_{\text{Feedback del Alquiler}}
++
+\underbrace{J_{vta}}_{\text{Shock VT}}
+$$
+*(Siendo $\vec{Z} \sim \mathcal{N}(0, 1)$ y $\lambda_{var} = 0.15$ para atenuación Markoviana).*
+
+**2. Dinámica Estocástica Alquiler ($r_{alq, t}$):**
+$$
+r_{alq, t} = 
+\max\left[ \mu_{alq} + (\lambda_{var} \cdot 0.5) \cdot \left(\text{diag}(A_{var}) \cdot r_{acumulado, alq} \right) + \beta_{alq} \cdot \Phi_a + (\sigma_{dyn} \cdot 0.6) \left[ L_{dyn} \cdot \vec{Z} \right] + J_{alq}, -0.05 \right]
+$$
+
+### C. Fricciones de Soporte Físico (Vol y Yield Floors)
+**Limitación a las Burbujas (Tensión Yield):**
+$$Yield_{bruto, t} = \frac{Precio_{alq, t} \cdot 12}{Precio_{vta, t}}$$
+Si los alquileres no suben o la venta sube enajenadamente, la inercia frena su revalorización especulativa usando resistencia:
+$$Resistencia_t = \text{clip}\left( \frac{Yield_{bruto, t}}{0.025}, 0.5, 1.0 \right)$$
+$$\text{Si } r_{vta, t} > 0 \rightarrow \text{Aplicar } (r_{vta, t} \cdot Resistencia_t)$$
+
+### D. Negative Jump Process (Turístico) ($J_t$)
+La simulación salta abruptamente para reflejar el año del decreto.
+$$J_{vta} = -0.10 \cdot \left( \frac{D_i}{0.46} \right), \quad J_{alq} = -0.06 \cdot \left( \frac{D_i}{0.46} \right)$$
+*(Donde $D_i$ es la tasa de concentración de Vivienda Turística local vs Nou Eixample).*
+    """)
 
 # ============================================================================
 # TAB 5 — TESTS
