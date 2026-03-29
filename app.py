@@ -1885,8 +1885,11 @@ def generate_exec_report_v40(dist_idx, params, n_sim_val,
     desc_yield = "ALTO" if rank_yield <= 3 else ("PROMEDIO" if rank_yield <= 7 else "BAJO")
     desc_cagr  = "ALTA" if rank_cagr <= 3 else ("MEDIA" if rank_cagr <= 7 else "BAJA")
 
+    pdf.set_x(10)
     pdf.multi_cell(0, 5, cs(f"- Posicion en Yield Bruto: {rank_yield} de 10 distritos (Nivel {desc_yield}). El yield en la zona promedia {yield_actual:.1f}% actual desplazandose hacia {yield_32:.1f}% estimado en el horizonte {n_yr} anos."))
+    pdf.set_x(10)
     pdf.multi_cell(0, 5, cs(f"- Posicion en Plusvalia Esperada: {rank_cagr} de 10 distritos (Apreciacion de Capital {desc_cagr})."))
+    pdf.set_x(10)
     pdf.multi_cell(0, 5, cs(f"- Riesgo Estocastico P10 (Escenario Bajista): En el peor 10% de simulaciones futuras (crisis estructural o encarecimiento abrupto del credito), el precio en 2032 cotizaria a minimo {int(v32_p10):,} EUR/m2. Supone una desviacion del {riesgo_downside:+.1f}% sobre el equity actual."))
 
     pdf.add_page()
@@ -1925,6 +1928,7 @@ def generate_exec_report_v40(dist_idx, params, n_sim_val,
     pdf.set_font('Arial', 'B', 10)
     pdf.cell(0, 6, cs(f"DICTAMEN ESTRATEGICO: {perfil}"), 0, 1)
     pdf.set_font('Arial', '', 10)
+    pdf.set_x(10)
     pdf.multi_cell(0, 5, cs(texto_justificante))
     pdf.ln(8)
 
@@ -1972,6 +1976,7 @@ def generate_exec_report_v40(dist_idx, params, n_sim_val,
     pdf.ln(10)
     pdf.set_font('Arial', 'I', 7)
     pdf.set_text_color(127)
+    pdf.set_x(10)
     pdf.multi_cell(0, 4, cs("Disclaimer: Simulacion de tendencias estadistica de consultoria que en ningun caso sustituye a "
                             "tasacion legal. El modelo SDE v40 (Cholesky/Markov/Var) usa simulaciones P50. "
                             f"Shock Residencial/Turistico: {'Activado (+caidas asimilables al Real Decreto de turismo)' if params.get('shock_vt') else 'Desactivado'}."))
@@ -2382,4 +2387,3 @@ st.caption(
     f"beta_vta: {modelo_act['beta_vta'].min():.2f}-{modelo_act['beta_vta'].max():.2f} | "
     f"beta_alq: {modelo_act['beta_alq'].min():.2f}-{modelo_act['beta_alq'].max():.2f}"
 )
-
