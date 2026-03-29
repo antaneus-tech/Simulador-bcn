@@ -1473,7 +1473,7 @@ with tab_metodo:
     st.markdown(r"""
 # Informe Metodológico Exhaustivo: Barcelona Strategic Model v40.1
 
-**Objetivo:** Desglose técnico y matemático completo de las Ecuaciones Diferenciales Estocásticas (SDE), procesos de decisión de Markov y formulaciones empíricas del modelo predictivo inmobiliario.
+**Objetivo:** Desglose técnico y matemático completo de las Ecuaciones Diferenciales Estocásticas (SDE), procesos de decisión de Markov y formulaciones empíricas del modelo predictivo inmobiliario `app.py`.
 
 ---
 
@@ -1487,14 +1487,14 @@ $$M_{t, vta} = - \text{clip}\left(\frac{\text{Euribor} - 2.5}{100}, -0.02, 0.04\
 *(Un $M_t > 0$ incentiva el ciclo, $M_t < 0$ lo deprime).*
 
 ### B. Impulso Macro para Alquiler ($M_{t, alq}$)
-El Euribor tiene aquí un signo inverso. Tipos altos restringen el acceso crediticio a la venta, desviando estructuralmente esa demanda hacia el alquiler, lo que incrementa los precios por shock de demanda:
+El Euribor tiene aquí un signo inverso. Tipos altos restringen el acceso crediticio a la venta, desviando estructuralmente esa demanda hacia el alquiler, lo que incrementa los precios por shock de demanda (crowding out):
 $$M_{t, alq} = + \text{clip}\left(\frac{\text{Euribor} - 2.5}{100} \cdot 0.4, -0.01, 0.02\right) + \text{clip}\left(\frac{\text{IPC} - 2.0}{100} \cdot 0.6, -0.02, 0.02\right) - \text{clip}\left(\frac{\text{Paro} - 10.0}{100} \cdot 0.3, -0.01, 0.02\right)$$
 
 ---
 
 ## 2. Régimen Predictivo de Markov No Homogéneo
 
-El algoritmo evalúa iterativamente 3 estados estocásticos discretos $S_t \in \{\text{0: Normal, 1: Boom, 2: Crisis}\}$. Primero calcula un "score" probabilístico normalizando las tres variables macro (Euribor, IPC, Paro):
+El algoritmo evalúa iterativamente 3 estados estocásticos discretos $S_t \in \{\text{0: Normal, 1: Boom, 2: Crisis}\}$. Primero calcula un "score" probabilístico ($U_{S}$) normalizando las tres variables en su recorrido histórico en España (Euribor $[0, 5]$, IPC $[0, 8]$, Paro $[5, 30]$):
 
 $$E_{norm} = \text{clip}\left(\frac{\text{Euribor}}{5.0}, 0, 1\right)$$
 $$I_{norm} = \text{clip}\left(\frac{\text{IPC}}{8.0}, 0, 1\right)$$
@@ -1505,10 +1505,10 @@ $$U_{norm} = 0.5$$
 $$U_{boom} = (1 - E_{norm}) \cdot 0.4 + (1 - P_{norm}) \cdot 0.4 + \text{clip}\left( I_{norm}(1 - I_{norm}) \cdot 4, 0, 1\right) \cdot 0.2$$
 $$U_{crisis} = E_{norm} \cdot 0.45 + P_{norm} \cdot 0.45 + \text{clip}(I_{norm} - 0.5, 0, 0.5) \cdot 0.1$$
 
-Las probabilidades de estado $P(S)$ se consiguen a través de una función *Softmax* aplacada:
+Posteriormente, las probabilidades de estado $P(S)$ se consiguen a través de una función _Softmax_ aplacada:
 $$P(S_i) = \frac{\exp(U_{S_i} \cdot 2.5)}{\sum_{j \in \{norm, boom, crisis\}} \exp(U_{S_j} \cdot 2.5)}$$
 
-Estas actúan sobre una **Matriz de Transición de Markov ($MTM$)** interanual (con persistencia $PER=0.55$):
+Estas probabilidades $P_{norm}, P_{boom}, P_{crisis}$ actúan sobre una **Matriz de Transición de Markov ($MTM$)** con persistencia base $PER = 0.55$:
 $$
 \mathbf{MTM} = 
 \begin{bmatrix}
@@ -1517,12 +1517,14 @@ PER + (1-PER)P_{norm} & (1-PER)P_{boom} & (1-PER)P_{crisis} \\
 0.12 + 0.20 P_{norm} & 0.02 & PER + (1-PER)P_{crisis}
 \end{bmatrix}
 $$
+*(Cada fila es re-normalizada obligatoriamente para que sume 1).*
 
 ---
 
 ## 3. Calibración Empírica del Shock $\Phi(S_t, M_t)$
 
-El algoritmo extrae históricamente, por OLS, multiplicadores ($\kappa$) y aditividades ($C$) asimétricos sobre ventanas empíricas "Boom" y "Crisis":
+El algoritmo realiza un análisis OLS empírico sobre las muestras de **Set B (Transacciones Reales y Oficiales del Ayuntamiento)** durante periodos pasados de Boom y Crisis, derivando el multiplicador de inercia empírica $\kappa$ y el diferencial constante $C$.
+Durante Monte Carlo, el impulso de crecimiento macro que se traslada al precio se modela bajo un efecto multiplicativo y asimétrico:
 
 $$
 \Phi_v(S_t, M_{t, vta}) = 
@@ -1533,60 +1535,89 @@ M_{t, vta} \cdot \kappa_{boom} + C_{boom} & \text{si } S_t = \text{Boom} \\
 \end{cases}
 $$
 
-*Para alquiler la volatilidad se atenúa un $30\% - 40\%$*:
-$$\Phi_{a} \to M_{t, alq} \cdot (\kappa \cdot 0.7) + (C \cdot 0.6)$$
+**Asimetría Convexa de "Crisis":** Como se observa, ante un estado de Crisis, todo "rebote momentáneo" macropositivo ($\max(M_t, 0) \cdot 1.0$) no goza del impulso agresivo $\kappa_{crisis}$, mientras que cada choque macro negativo ($\min(M_t, 0)$) sí se amplifica agudamente multiplicándose por $\kappa_{crisis}$ y restándole $C_{crisis}$, provocando drenajes bruscos durante el crash.
+
+*Para alquiler*, el factor de amplificación de shock se atenúa algorítmicamente aplicándose multiplicadores más elásticos:
+$$\Phi_{a} \to M_{t, alq} \cdot (\kappa \cdot 0.7) \pm (C \cdot 0.6)$$
 
 ---
 
-## 4. Motor VAR(1) e Inercia Endógena (Ridge)
+## 4. Motor VAR(1) e Inercia Endógena
 
+Las memorias cortas del comportamiento del mercado (inercia autorregresiva de precios locales de un año respecto al anterior $r_{t-1}$) resueltas en los 10 distritos se estiman globalmente a través de un **Vector Autorregresivo regularizado (Ridge):**
+
+Dada matriz $X$ con retornos en $t$ y vector predictivo $Y$ con retornos en $t+1$:
 $$A_{var} = \left( X^T X + \lambda_{var\_ridge} \cdot \mathbf{I} \right)^{-1} X^T Y$$
-Donde $\lambda_{var\_ridge} = 0.5$ estabiliza los pequeños tamaños muestrales (Regularización de Tikhonov).
+Donde $\lambda_{var\_ridge} = 0.5$.
+
+Se limita en seguridad el radio espectral de los autovalores en $\mid \lambda_{max}(A_{var}) \mid \leq 0.85$ para evitar trayectorias estocásticas explosivas. 
 
 ---
 
-## 5. Simulación Estocástica y Dynamic Conditional Correlation (SDE)
+## 5. Simulación Estocástica: Dynamic Conditional Correlation (SDE Monte Carlo)
 
-### A. Matrices DCC por Régimen
-* **Boom:** La volatilidad desciende orgánicamente ($\sigma_{dyn} = \sigma_{base} \cdot 0.85$) y la correlación cruzada pierde fuerza hacia un comportamiento general barcelonés de crecimiento ($\mathbf{Corr}_{dyn} = \mathbf{Corr}_{base} \cdot 0.8 + \mathbf{I} \cdot 0.2$).
-* **Crisis:** La incertidumbre explota ($\sigma_{dyn} = \sigma_{base} \cdot 1.60$), y el efecto sistémico obliga a que las correlaciones converjan trágicamente a $1.0$ (todos caen juntos) con modelo $0.5 + 0.5\cdot J$.
-* Construcción estocástica ortogonal: $L_{dyn} = \text{Cholesky}(\mathbf{Corr}_{dyn})$.
+### A. DCC - Adaptación a Régimen
+Añadida la Matriz de Correlación Base ($\mathbf{Corr}_{base}$) de los 10 distritos originada desde 2007, y las volatilidades base ($\sigma_{base}$), el modelo DCC inyecta asimetrías de diversificación:
+* **Boom:** La correlación disminuye, el ruido sube independientemente en zonas de moda, bajando la volatilidad general.
+  $\sigma_{dyn} = \sigma_{base} \cdot 0.85$ 
+  $\mathbf{Corr}_{dyn} = \mathbf{Corr}_{base} \cdot 0.8 + \mathbf{I} \cdot 0.2$
+* **Crisis:** La correlación se acentúa severamente hacia 1.0 (caen todos a la vez), aumentando gravemente la dispersión.
+  $\sigma_{dyn} = \sigma_{base} \cdot 1.60$
+  $\mathbf{Corr}_{dyn} = \mathbf{Corr}_{base} \cdot 0.5 + J \cdot 0.5$ (siendo $J$ Matriz de unos)
+* Y en Normal: $\sigma_{dyn} = \sigma_{base}, \mathbf{Corr}_{dyn} = \mathbf{Corr}_{base}$
 
-### B. Ecuaciones Estocásticas Diferenciales (Integración Iterativa)
-El núcleo del cálculo interanual avanza sumando los cuatro sub-vectores analíticos principales ($t$ representa un salto de año):
+Se deriva la descomposicion **Cholesky** dependiente del régimen para distribuir la innovación de ruido gaussiano múltiple Z:
+$$L_{dyn} = \text{Cholesky}(\mathbf{Corr}_{dyn})$$
 
-**1. Dinámica Estocástica Venta ($r_{vta, t}$):**
+### B. Ecuación Estocástica de Venta Anual ($t$)
+Para la Venta iterativa en cada $t$, para cada distrito $dist$:
+
 $$
-r_{vta, t} = 
-\underbrace{\mu_{vta} + \lambda_{var} \left[ A_{var} \cdot \vec{r}_{prev} \right]}_{\text{Inercia Histórica}} 
+r_{vta, t}^{dist} = 
+\underbrace{\mu_{vta}^{dist} + \lambda_{var} \left[ A_{var} \cdot \vec{r}_{prev} \right]^{dist}}_{\text{Inercia Endógena (Drift + MS-VAR)}} 
 + 
-\underbrace{\beta_{vta} \cdot \Phi_v(S_t, M_{t, vta})}_{\text{Ajuste al Ciclo}} 
+\underbrace{\beta_{vta}^{dist} \cdot \Phi_v(S_t, M_{t, vta})}_{\text{Ciclo Macro + Shock Régimen}} 
 + 
-\underbrace{\sigma_{dyn} \cdot \left[ L_{dyn} \cdot \vec{Z} \right]}_{\text{Ruido Blanco Cíclico}}
+\underbrace{\sigma_{dyn}^{dist} \cdot \left[ L_{dyn} \cdot \vec{Z} \right]^{dist}}_{\text{Ruido Blanco Cíclico Incorrelacionado Espacial}}
 +
-\underbrace{\rho_{vta, alq} \cdot \text{clip}(r_{alq, t-1}, -0.05, 0.05)}_{\text{Feedback del Alquiler}}
+\underbrace{\rho_{vta, alq} \cdot \text{clip}(r_{alq, t-1}^{dist}, -0.05, 0.05)}_{\text{Feedback Retorno Alquiler}}
 +
-\underbrace{J_{vta}}_{\text{Shock VT}}
+J_{vta}
 $$
-*(Siendo $\vec{Z} \sim \mathcal{N}(0, 1)$ y $\lambda_{var} = 0.15$ para atenuación Markoviana).*
+  * *$\lambda_{var} = 0.15$ es la atenuación temporal del vector autorregresivo.*
+  * $\vec{Z} \sim \mathcal{N}(0, 1)$
+  * $\rho_{vta, alq} = 0.45$
 
-**2. Dinámica Estocástica Alquiler ($r_{alq, t}$):**
+### C. Estabilizaciones Fundamentales (Yield Floor & Vol Floor)
+1. **Piso de Caída libre:**
+   $$r_{vta, t}^{dist} = \max(r_{vta, t}^{dist}, -0.07)$$
+2. **Floor Yield Ratio (Gravity):**
+   Si la simulación empuja la Venta lejos de los fundamentos básicos provocando rentabilidades ínfimas de Yield, la función atenúa la tasa futura.
+   $$Yield_{bruto, t} = \frac{Precio_{alq, t} \cdot 12}{Precio_{vta, t}}$$
+   $$Resistencia_t = \text{clip}\left( \frac{Yield_{bruto, t}}{0.025}, 0.5, 1.0 \right)$$
+   $$\text{Si } r_{vta, t}^{dist} > 0 \rightarrow r_{vta, t}^{dist} = r_{vta, t}^{dist} \cdot Resistencia_t$$
+   *(Es decir, a medida que la vivienda renta menos del 2.5%, las subidas interanuales especulativas se bloquean gradualmente frenando hasta el 50% de revalorización).*
+
+### D. Ecuación Estocástica de Alquiler ($t$)
 $$
-r_{alq, t} = 
-\max\left[ \mu_{alq} + (\lambda_{var} \cdot 0.5) \cdot \left(\text{diag}(A_{var}) \cdot r_{acumulado, alq} \right) + \beta_{alq} \cdot \Phi_a + (\sigma_{dyn} \cdot 0.6) \left[ L_{dyn} \cdot \vec{Z} \right] + J_{alq}, -0.05 \right]
+r_{alq, t}^{dist} = 
+\max\left[ \mu_{alq}^{dist} + (\lambda_{var} \cdot 0.5) \cdot \left(\text{diag}(A_{var}) \cdot r_{acumulado, alq}^{dist} \right) + \beta_{alq}^{dist} \cdot \Phi_a + (\sigma_{dyn}^{dist} \cdot 0.6) \left[ L_{dyn} \cdot \vec{Z} \right]^{dist} + J_{alq}, -0.05 \right]
 $$
+*(Nota: El alquiler no es vectorial en el término cruzado de VAR, es diagonal al distrito local puro local, es significativamente menos sensible al régimen de volatilidad espacial $\cdot 0.6$, y no padece bloqueos de yield, reflejando su inercia viscosa de contratos plurianuales).*
 
-### C. Fricciones de Soporte Físico (Vol y Yield Floors)
-**Limitación a las Burbujas (Tensión Yield):**
-$$Yield_{bruto, t} = \frac{Precio_{alq, t} \cdot 12}{Precio_{vta, t}}$$
-Si los alquileres no suben o la venta sube enajenadamente, la inercia frena su revalorización especulativa usando resistencia:
-$$Resistencia_t = \text{clip}\left( \frac{Yield_{bruto, t}}{0.025}, 0.5, 1.0 \right)$$
-$$\text{Si } r_{vta, t} > 0 \rightarrow \text{Aplicar } (r_{vta, t} \cdot Resistencia_t)$$
+### E. Shock Regulatorio Negativo Turístico (Jump Process: $J$)
+En el año de entrada del decreto anti pisos turísticos (2028/2029), el modelo aplica una pérdida aditiva inmediata de mercado según la carga de saturación registrada (`concentración_vt_real` local). 
+Si la concentración máxima en BCN es de $D_{max} = 0.46$ (como el de mayor carga proporcional de la ciudad), el salto brusco es perjudicial:
+$$J_{vta} = -0.10 \cdot \left( \frac{\text{Concentración}_{vt}^{dist}}{D_{max}} \right)$$
+$$J_{alq} = -0.06 \cdot \left( \frac{\text{Concentración}_{vt}^{dist}}{D_{max}} \right)$$
 
-### D. Negative Jump Process (Turístico) ($J_t$)
-La simulación salta abruptamente para reflejar el año del decreto.
-$$J_{vta} = -0.10 \cdot \left( \frac{D_i}{0.46} \right), \quad J_{alq} = -0.06 \cdot \left( \frac{D_i}{0.46} \right)$$
-*(Donde $D_i$ es la tasa de concentración de Vivienda Turística local vs Nou Eixample).*
+---
+
+## 6. Procedimiento Retrospectivo Final (Recálculo Iterativo)
+1. **Integración:** El precio final simula el *Growth Rate* determinándolo escalarmente:
+   $$Precio_{t} = \max(Precio_{t-1} \cdot (1 + r_t), \text{Límite Inferior})$$
+   (Tratado con límite min: Venta 500 €/m², Alquiler 5 €/m²).
+2. **Distribución Confidencial P10, P50 (Mediana), P90**: Tras generar $n\_sim$ trayectorias matriciales, el vector 3D final `[simulación, distrito, tiempo]` se reduce en cuantiles y media móvil para reportarse en visualización final.
     """)
 
 # ============================================================================
@@ -1712,199 +1743,238 @@ def _noshock_approx(sv_s, sa_s, di):
 def generate_exec_report_v40(dist_idx, params, n_sim_val,
                               modelo_ppal, sv_ppal, sa_ppal, anos_ppal,
                               modelo_comp, sv_comp, sa_comp) -> bytes:
-    ds_ppal = DATASETS[params['dataset_key']]
-    probs   = calcular_probabilidades_regimen(
-        params.get('euribor', 2.0), params.get('ipc', 2.5), params.get('paro', 10.0))
-    Mt_val  = calcular_Mt(params.get('euribor', 2.5),
-                          params.get('ipc', 2.0), params.get('paro', 10.0))
+    import tempfile
+    import os
+    import matplotlib.pyplot as plt
+    import numpy as np
 
+    dist_name = distritos[dist_idx]
+    ds_ppal = DATASETS[params['dataset_key']]
+    ano_base = ds_ppal['ano_fin']
+
+    # 1. Kpis básicos
+    pv_actual = ds_ppal['venta'][dist_idx, -1]
+    pa_actual = ds_ppal['alquiler'][dist_idx, -1]
+    yield_actual = (pa_actual * 12) / pv_actual * 100
+
+    v32_med = float(np.median(sv_ppal[:, dist_idx, -1]))
+    a32_med = float(np.median(sa_ppal[:, dist_idx, -1]))
+    yield_32 = (a32_med * 12) / v32_med * 100
+
+    n_yr = 2032 - ano_base
+    cagr_v = ((v32_med / pv_actual) ** (1/n_yr) - 1) * 100
+    cagr_a = ((a32_med / pa_actual) ** (1/n_yr) - 1) * 100
+
+    # Riesgo P10-P90
+    v32_p10 = float(np.percentile(sv_ppal[:, dist_idx, -1], 10))
+    v32_p90 = float(np.percentile(sv_ppal[:, dist_idx, -1], 90))
+    riesgo_downside = ((v32_p10 / pv_actual) - 1) * 100
+
+    # Rankings / Percentiles relativos (sobre 10 distritos)
+    v32_all = np.median(sv_ppal[:, :, -1], axis=0)
+    a32_all = np.median(sa_ppal[:, :, -1], axis=0)
+    yields_32_all = (a32_all * 12) / v32_all * 100
+    cagrs_all = ((v32_all / ds_ppal['venta'][:, -1]) ** (1/n_yr) - 1) * 100
+
+    rank_yield = sum(yields_32_all > yield_32) + 1  # 1 = mejor yield
+    rank_cagr  = sum(cagrs_all > cagr_v) + 1       # 1 = mas crece
+
+    # 2. Generar gráfico (Tempfile)
+    rec_hist = modelo_ppal['reconstruidos'][dist_idx]
+    mask_hist = (anos_macro <= ano_base) & (rec_hist > 0)
+    y_hist = rec_hist[mask_hist]
+    x_hist = anos_macro[mask_hist]
+
+    p10_v = np.percentile(sv_ppal[:, dist_idx, :], 10, axis=0)
+    p50_v = np.percentile(sv_ppal[:, dist_idx, :], 50, axis=0)
+    p90_v = np.percentile(sv_ppal[:, dist_idx, :], 90, axis=0)
+
+    # Prepend last historical
+    x_proy = np.concatenate([[ano_base], anos_ppal])
+    y_p10 = np.concatenate([[y_hist[-1]], p10_v])
+    y_p50 = np.concatenate([[y_hist[-1]], p50_v])
+    y_p90 = np.concatenate([[y_hist[-1]], p90_v])
+
+    plt.figure(figsize=(7, 3.5))
+    plt.plot(x_hist, y_hist, 'k.-', label='Historico')
+    plt.fill_between(x_proy, y_p10, y_p90, color='red', alpha=0.15, label='Banda de Riesgo P10-P90')
+    plt.plot(x_proy, y_p50, 'r--', linewidth=2, label='Prevision P50')
+    plt.axvline(ano_base, color='navy', linestyle=':', label=f'Actual ({ano_base})')
+    plt.grid(True, linestyle='--', alpha=0.6)
+    plt.title(f"Proyeccion Valor EUR/m2 - {dist_name} al 2032", fontsize=10)
+    plt.legend(loc='upper left', fontsize=8)
+    plt.tight_layout()
+
+    fd, path_img = tempfile.mkstemp(suffix=".png")
+    os.close(fd)
+    plt.savefig(path_img, dpi=180)
+    plt.close()
+
+    # 3. Construir PDF Ejecutivo
     pdf = PDFv40()
     pdf.add_page()
 
-    # Portada
+    # Cabecera
     pdf.set_font('Arial', 'B', 15)
-    pdf.set_fill_color(44, 62, 80)
+    pdf.set_fill_color(41, 128, 185) # Azul
     pdf.set_text_color(255)
-    pdf.cell(0, 11, cs(f"INFORME EJECUTIVO v40: {distritos[dist_idx].upper()}"),
-             0, 1, 'C', 1)
+    pdf.cell(0, 11, cs(f"INFORME ESTUDIO DE INVERSION: {dist_name.upper()}"), 0, 1, 'C', 1)
+
     pdf.set_text_color(0)
     pdf.set_font('Arial', 'I', 9)
-    pdf.cell(0, 6, cs(
-        f"Barcelona Strategic Model v40.0 | {params['dataset_key']} | "
-        f"SDE bifurcada: Inercia + beta*Phi(S,M) | Betas empiricas venta/alquiler"
-    ), 0, 1, 'C')
-    pdf.ln(4)
-    _trazabilidad(pdf, params, distritos[dist_idx], n_sim_val, modelo_ppal)
-
-    # 1. Parámetros macro
-    pdf.set_font('Arial', 'B', 11)
-    pdf.cell(0, 8, cs("1. PARAMETROS MACROECONOMICOS Y CICLO v40"), 0, 1)
-    pdf.set_font('Arial', '', 9)
-    phi_v_act = phi_regimen(0, Mt_val,
-                             modelo_ppal['kappa_boom'], modelo_ppal['C_boom'],
-                             modelo_ppal['kappa_crisis'], modelo_ppal['C_crisis'])
-    pdf.multi_cell(0, 5, cs(
-        f"Regimen: {params.get('regimen','N/A')} | "
-        f"Euribor: {params.get('euribor',0):.2f}% | "
-        f"IPC: {params.get('ipc',0):.2f}% | Paro: {params.get('paro',0):.1f}%\n"
-        f"Impulso macro consolidado M_t: {Mt_val*100:+.3f}%\n"
-        f"P(Normal)={probs[0]*100:.1f}% | P(Boom)={probs[1]*100:.1f}% | "
-        f"P(Crisis)={probs[2]*100:.1f}%\n"
-        f"Drift historico ({distritos[dist_idx]}): "
-        f"{modelo_ppal['drift_venta'][dist_idx]*100:.2f}%/a | "
-        f"beta_vta: {modelo_ppal['beta_vta'][dist_idx]:.3f} | "
-        f"beta_alq: {modelo_ppal['beta_alq'][dist_idx]:.3f}\n"
-        f"Parametros regimen calibrados empiricamente (Set B, ventanas 2013-2020):\n"
-        f"  C_boom={modelo_ppal['C_boom']*100:.2f}% | "
-        f"C_crisis={modelo_ppal['C_crisis']*100:.2f}% | "
-        f"kappa_boom={modelo_ppal['kappa_boom']:.3f} | "
-        f"kappa_crisis={modelo_ppal['kappa_crisis']:.3f}\n"
-        f"Phi(Normal, M_t) = {phi_v_act*100:+.3f}% "
-        f"(impulso ciclico sobre el distrito en regimen Normal)"
-    ))
+    pdf.cell(0, 6, cs(f"Dataset Base: {params['dataset_key']} | Escenario Macro Asumido: {params.get('regimen','Normal')}"), 0, 1, 'C')
     pdf.ln(3)
 
-    # 2. Sensibilidad VT
+    # Bloque 1: Resumen de KPIs
     pdf.set_font('Arial', 'B', 11)
-    pdf.cell(0, 8, cs("2. SENSIBILIDAD REGULATORIA — SHOCK VT"), 0, 1)
-    pdf.set_font('Arial', '', 9)
-    shock_txt = (f"Activado en {params.get('shock_ano', 2029)}"
-                 if params.get('shock_vt') else "Desactivado")
-    pdf.cell(0, 5, cs(f"Estado del shock: {shock_txt}"), 0, 1)
-    conc_d = concentracion_vt_real[dist_idx]
-    pdf.cell(0, 5, cs(
-        f"Densidad VT {distritos[dist_idx]}: {conc_d:.3f} | "
-        f"Impacto venta: {-10*(conc_d/0.46):.1f}% | "
-        f"Impacto alquiler: {-6*(conc_d/0.46):.1f}%"
-    ), 0, 1)
+    pdf.set_fill_color(236, 240, 241)
+    pdf.cell(0, 8, cs("1. METRICAS CLAVE DE INVERSION AL FINAL DEL CICLO (2032)"), 0, 1, 'L', 1)
+    pdf.set_font('Arial', '', 10)
+
     pdf.ln(2)
-    hdrs_vt = ["Escenario", "Venta 2032 (Shock)", "Venta 2032 (Sin Shock)",
-               "Alq 2032 (Shock)", "Alq 2032 (Sin Shock)"]
-    wdts_vt = [35, 38, 38, 38, 38]
-    _tabla_hdr(pdf, hdrs_vt, wdts_vt)
-    for sc, (sv_s, sa_s) in [
-        ("Crecimiento",  (sv_crec, sa_crec)),
-        ("Estanflacion", (sv_est,  sa_est)),
-        ("Recesion",     (sv_rec,  sa_rec)),
-    ]:
-        v32 = np.median(sv_s[:, dist_idx, -1])
-        a32 = np.median(sa_s[:, dist_idx, -1])
-        vns, ans = _noshock_approx(sv_s, sa_s, dist_idx)
-        pdf.set_fill_color(245, 245, 245)
-        for val, w in zip([cs(sc), f"{int(v32):,}", f"{int(vns):,}",
-                           f"{a32:.1f}", f"{ans:.1f}"], wdts_vt):
-            pdf.cell(w, 6, val, 1, 0, 'C', 1)
-        pdf.ln()
+    # Tabla de 2x2 para KPIs
+    pdf.cell(45, 6, cs(f"Precio Actual ({ano_base}):"), 0, 0)
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(45, 6, cs(f"{int(pv_actual):,} EUR/m2"), 0, 0)
+    pdf.set_font('Arial', '', 10)
+
+    pdf.cell(50, 6, cs(f"Alquiler Actual ({ano_base}):"), 0, 0)
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(45, 6, cs(f"{pa_actual:.1f} EUR/m2/mes"), 0, 1)
+
+    pdf.set_font('Arial', '', 10)
+    pdf.cell(45, 6, cs("Estimacion P50 2032:"), 0, 0)
+    pdf.set_font('Arial', 'B', 10)
+    pdf.set_text_color(39, 174, 96) # Verde oscuro
+    pdf.cell(45, 6, cs(f"{int(v32_med):,} EUR/m2"), 0, 0)
+
+    pdf.set_text_color(0)
+    pdf.set_font('Arial', '', 10)
+    pdf.cell(50, 6, cs("Alquiler Estimado 2032:"), 0, 0)
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(45, 6, cs(f"{a32_med:.1f} EUR/m2/mes"), 0, 1)
+
+    pdf.set_text_color(0)
+    pdf.set_font('Arial', '', 10)
+    pdf.cell(45, 6, cs("Revalorizacion (CAGR):"), 0, 0)
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(45, 6, cs(f"{cagr_v:+.2f}% / ano"), 0, 0)
+
+    pdf.set_font('Arial', '', 10)
+    pdf.cell(50, 6, cs("Yield Bruto Est. 2032:"), 0, 0)
+    pdf.set_font('Arial', 'B', 10)
+    pdf.set_text_color(41, 128, 185)
+    pdf.cell(45, 6, cs(f"{yield_32:.2f}%"), 0, 1)
+    pdf.set_text_color(0)
+    pdf.ln(2)
+
+    # Grafico
+    y_g = pdf.get_y()
+    pdf.image(path_img, x=15, y=y_g, w=180)
+    os.remove(path_img)
+    pdf.set_y(y_g + 88)  # Ajustar cursor tras imagen
+    pdf.ln(1)
+
+    # Ranking
+    pdf.set_font('Arial', 'B', 11)
+    pdf.set_fill_color(236, 240, 241)
+    pdf.cell(0, 8, cs("2. POSICIONAMIENTO DEL DISTRITO FRENTE AL MERCADO DE BARCELONA"), 0, 1, 'L', 1)
+    pdf.set_font('Arial', '', 9)
+    pdf.ln(2)
+
+    desc_yield = "ALTO" if rank_yield <= 3 else ("PROMEDIO" if rank_yield <= 7 else "BAJO")
+    desc_cagr  = "ALTA" if rank_cagr <= 3 else ("MEDIA" if rank_cagr <= 7 else "BAJA")
+
+    pdf.multi_cell(0, 5, cs(f"- Posicion en Yield Bruto: {rank_yield} de 10 distritos (Nivel {desc_yield}). El yield en la zona promedia {yield_actual:.1f}% actual desplazandose hacia {yield_32:.1f}% estimado en el horizonte {n_yr} anos."))
+    pdf.multi_cell(0, 5, cs(f"- Posicion en Plusvalia Esperada: {rank_cagr} de 10 distritos (Apreciacion de Capital {desc_cagr})."))
+    pdf.multi_cell(0, 5, cs(f"- Riesgo Estocastico P10 (Escenario Bajista): En el peor 10% de simulaciones futuras (crisis estructural o encarecimiento abrupto del credito), el precio en 2032 cotizaria a minimo {int(v32_p10):,} EUR/m2. Supone una desviacion del {riesgo_downside:+.1f}% sobre el equity actual."))
+
+    pdf.add_page()
+    # Recomendacion Dinamica
+    pdf.set_font('Arial', 'B', 11)
+    pdf.set_fill_color(236, 240, 241)
+    pdf.cell(0, 8, cs("3. CONCLUSIONES Y PERFIL DE INVERSION RECOMENDADO"), 0, 1, 'L', 1)
+    pdf.set_font('Arial', '', 10)
     pdf.ln(3)
 
-    # 3. Tabla maestra todos los distritos
-    pdf.add_page()
+    # Logica de clasificacion
+    perfil = ""
+    texto_justificante = ""
+    beta_dist = float(modelo_ppal['beta_vta'][dist_idx])
+    es_refugio = beta_dist < 0.95
+    es_volatil = beta_dist > 1.05
+
+    if yield_32 >= 4.5 and cagr_v >= 0.0:
+        perfil = "CASH-FLOW Y PROTECCION DE RENDIMIENTO (Value Asset)"
+        texto_justificante = f"El activo proyecta rentabilidades brutas al alquiler extraordinariamente solidas (superiores al 4.5%), asegurando flujos de caja y dividendos operativos sin necesidad de apalancarse estrictamente en grandes oscilaciones especulativas del mercado de venta para justificar la rentabilidad bruta de la operacion final."
+    elif cagr_v >= 2.5 and yield_32 < 4.5:
+        perfil = "APRECIACION DE CAPITAL DIRECTO (Growth Asset)"
+        texto_justificante = f"El mercado proyecta un encarecimiento de m2 por empuje exogeno superior al {2.5}% anual compuesto de media. Es un producto tipico de distritos prime, zonas fronterizas en gentrificacion o zonas moda, que premia la ganancia de capital, asumiendo menor generacion de caja por rentas en el camino."
+    elif cagr_v < 1.0 and es_refugio:
+        perfil = "INVERSION PRESERVATIVA (Refugio Conservador)"
+        texto_justificante = f"Se asume que la zona esta madura o en un top historico. Garantiza su posicion como almacen y refugio de capital inmunitario a grandes bandazos ciclicos, si bien, descontando inflacion, el crecimiento real neto esperable a 10 anos es sumamente austero y estabilizado."
+    else:
+        perfil = "PERFIL MIXTO DE EXPOSICION AL MERCADO MEDIO"
+        texto_justificante = f"Perfil en perfecta armonia cruzada a la media general barcelonesa, equilibrando la retribucion por retorno bruto alquiler y las presunciones de revalorizacion final de forma muy equilibrada. Para generar alpha extra respecto al promedio ciudad es requerida una estricta gestion comercial activa."
+
+    if es_volatil:
+        texto_justificante += f"\n\nATENCION AL RIESGO SISTEMICO: Su alta Beta OLS empirica de sensibilidad Macroecnomica ({beta_dist:.2f}) indica que estamos ante un bien de naturaleza mas ESPECULATIVA: si Barcelona sufre desequilibrios hipotecarios, aumentos fulminantes de paro u otras fricciones, su precio retrocedera mas rapido de lo que cae la media barcelonesa. Y a la inversa durante periodos expansivos."
+    elif es_refugio:
+         texto_justificante += f"\n\nAMORTIGUADOR ACTIVO (Defensivo): El factor de correlacion inelastico Beta local de la zona frente al grueso del IPV de Compraventa Inmobiliario (apenas {beta_dist:.2f}) le confiere atributos defensivos y de suelo natural ante shocks recesivos. Es mas probable preservar valor de compra."
+
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(0, 6, cs(f"DICTAMEN ESTRATEGICO: {perfil}"), 0, 1)
+    pdf.set_font('Arial', '', 10)
+    pdf.multi_cell(0, 5, cs(texto_justificante))
+    pdf.ln(8)
+
+    # 4. Tabla Comparativa Breve
     pdf.set_font('Arial', 'B', 11)
-    pdf.cell(0, 8, cs(
-        f"3. TABLA MAESTRA — TODOS LOS DISTRITOS "
-        f"({ds_ppal['ano_fin']} vs 2032) | {params['dataset_key']}"), 0, 1)
-    pv0_rep = ds_ppal['venta'][:, -1]
-    pa0_rep = ds_ppal['alquiler'][:, -1]
-    n_yr_rep = 2032 - ds_ppal['ano_fin']
-    hdrs_tm = ["Distrito", "Venta Base", "Venta 2032", "Var%",
-               "Alq Base", "Alq 2032", "Yield'32", "b_vta", "b_alq"]
-    wdts_tm = [38, 22, 22, 16, 18, 18, 18, 14, 14]
+    pdf.set_fill_color(236, 240, 241)
+    pdf.cell(0, 8, cs("4. COMPARATIVA POR ATRACTIVO (ORDENADO AL MEJOR YIELD 2032)"), 0, 1, 'L', 1)
+
+    pdf.ln(3)
+    pdf.set_font('Arial', '', 8)
+    hdrs_tm = ["Rnk", "Distrito", "Venta '32 (EUR)", "Alquiler '32", "Yield Bruto '32", "Plusvalia anual"]
+    wdts_tm = [10, 45, 30, 35, 35, 35]
     _tabla_hdr(pdf, hdrs_tm, wdts_tm)
-    for i, d in enumerate(distritos):
-        v32_i = np.median(sv_ppal[:, i, -1])
-        a32_i = np.median(sa_ppal[:, i, -1])
-        var_i = ((v32_i / pv0_rep[i]) - 1) * 100
-        yld_i = (a32_i * 12) / v32_i * 100
-        pdf.set_fill_color(240 if i % 2 == 0 else 255)
+
+    # Ordenar por Yield Descendente
+    sorted_idx = np.argsort(yields_32_all)[::-1]
+
+    for rank, i in enumerate(sorted_idx, 1):
+        v_i = v32_all[i]
+        a_i = a32_all[i]
+        y_i = yields_32_all[i]
+        c_i = cagrs_all[i]
+        d_name = distritos[i]
+
+        # Resaltar la fila del distrito seleccionado
+        if i == dist_idx:
+            pdf.set_fill_color(173, 216, 230) # Azul claro
+            pdf.set_font('Arial', 'B', 8)
+        else:
+            pdf.set_fill_color(240 if rank % 2 == 0 else 255)
+            pdf.set_font('Arial', '', 8)
+
         for val, w in zip([
-            cs(d), f"{int(pv0_rep[i]):,}", f"{int(v32_i):,}",
-            f"{var_i:+.1f}%", f"{pa0_rep[i]:.1f}", f"{a32_i:.1f}",
-            f"{yld_i:.1f}%",
-            f"{modelo_ppal['beta_vta'][i]:.3f}",
-            f"{modelo_ppal['beta_alq'][i]:.3f}"
+            str(rank),
+            cs(d_name),
+            f"{int(v_i):,} / m2",
+            f"{a_i:.1f} / m2",
+            f"{y_i:.2f}%",
+            f"{c_i:+.2f}%"
         ], wdts_tm):
             pdf.cell(w, 6, val, 1, 0, 'C', 1)
         pdf.ln()
 
-    # 4. Recomendación
-    pdf.ln(4)
-    pdf.set_font('Arial', 'B', 11)
-    pdf.cell(0, 8, cs("4. RECOMENDACION AL INVERSOR v40"), 0, 1)
-    pdf.set_font('Arial', '', 9)
-    pdf.multi_cell(0, 5, cs(
-        f"Basado en {params['dataset_key']} | Motor v40.0 | "
-        f"Dato base: {ds_ppal['fecha_dato']}\n\n"
-        "DIFERENCIA CLAVE v40 respecto a v33: la SDE bifurcada preserva la tendencia\n"
-        "estructural de cada distrito intacta. Solo el componente ciclico se amplifica\n"
-        "o amortigua por la beta empirica especifica (venta y alquiler independientes).\n\n"
-        "- YIELD: Nou Barris y Sant Andreu presentan yields superiores al 5%.\n"
-        "  Baja exposicion VT y demanda residencial estable.\n\n"
-        "- PLUSVALIA: distritos con beta_vta alta (Eixample, Sarria) amplifican el\n"
-        "  ciclo. En Crisis su beta multiplica el shock negativo exactamente como\n"
-        "  muestran los datos historicos. En v33 esto era un supuesto; en v40 emerge\n"
-        "  de la covarianza historica contra el IPV INE.\n\n"
-        "- ALQUILER INDEPENDIENTE: beta_alq calibrada sobre el mercado de alquiler\n"
-        "  BCN (media 10 distritos). Distritos con beta_alq < 1 tienen rentas mas\n"
-        "  estables en escenarios adversos, mejorando el perfil de riesgo del yield.\n\n"
-        f"- MACRO ACTUAL: M_t = {Mt_val*100:+.3f}%. Euribor={params.get('euribor',0):.1f}%.\n"
-        "  El impulso se transmite como beta_i * Phi(S, M_t), con C_crisis calibrado\n"
-        f"  empiricamente en {modelo_ppal['C_crisis']*100:.2f}% sobre datos 2013-2020.\n\n"
-        "NOTA: proyecciones sobre mediana P50. Consultar IC P10-P90 para rango de\n"
-        "incertidumbre completo. Horizonte 6 anos. Modelo sin datos de oferta."
-    ))
-
-    # 5. Comparativa sets
-    pdf.add_page()
-    pdf.set_font('Arial', 'B', 13)
-    pdf.set_fill_color(44, 62, 80)
-    pdf.set_text_color(255)
-    pdf.cell(0, 9, cs("5. COMPARATIVA DE RESULTADOS: AMBOS SETS"), 0, 1, 'C', 1)
-    pdf.set_text_color(0)
-    pdf.ln(4)
-    pdf.set_font('Arial', '', 9)
-    pdf.multi_cell(0, 5, cs(
-        "NOTA METODOLOGICA v40: ambas simulaciones comparten identicos parametros\n"
-        "estructurales (beta_vta, beta_alq, Cholesky, vol_cal) derivados del Set B.\n"
-        "La diferencia entre columnas refleja exclusivamente: (1) nivel de precios\n"
-        "de partida, (2) drift historico del set seleccionado, (3) inercia A_var.\n"
-        "No hay diferencias en betas ni correlaciones entre las dos simulaciones.\n"
-        f"Params macro comunes: Regimen={params.get('regimen','N/A')} | "
-        f"Euribor={params.get('euribor',0):.1f}% | "
-        f"IPC={params.get('ipc',0):.1f}% | Paro={params.get('paro',0):.1f}%"
-    ))
-    pdf.ln(3)
-
-    hdrs_cmp = ["Distrito",
-                f"Port Base ({DATASET_A['ano_fin']})",
-                "Port 2032 P50", "Port CAGR",
-                f"Ayto Base ({DATASET_B['ano_fin']})",
-                "Ayto 2032 P50", "Ayto CAGR"]
-    wdts_cmp = [42, 24, 22, 18, 24, 22, 18]
-    _tabla_hdr(pdf, hdrs_cmp, wdts_cmp)
-
-    pv_port = DATASET_A['venta'][:, -1]
-    pv_ayto = DATASET_B['venta'][:, -1]
-    n_yr_p  = 2032 - DATASET_A['ano_fin']
-    n_yr_a  = 2032 - DATASET_B['ano_fin']
-
-    if 'Portal' in params['dataset_key']:
-        sv_p, sv_a_r = sv_ppal, sv_comp
-    else:
-        sv_a_r, sv_p = sv_ppal, sv_comp
-
-    for i, d in enumerate(distritos):
-        v_p = np.median(sv_p[:, i, -1])
-        v_a = np.median(sv_a_r[:, i, -1])
-        cg_p = ((v_p / pv_port[i]) ** (1/n_yr_p) - 1) * 100
-        cg_a = ((v_a / pv_ayto[i]) ** (1/n_yr_a) - 1) * 100
-        pdf.set_fill_color(240 if i % 2 == 0 else 255)
-        for val, w in zip([
-            cs(d),
-            f"{int(pv_port[i]):,}", f"{int(v_p):,}", f"{cg_p:+.2f}%",
-            f"{int(pv_ayto[i]):,}", f"{int(v_a):,}", f"{cg_a:+.2f}%",
-        ], wdts_cmp):
-            pdf.cell(w, 6, val, 1, 0, 'C', 1)
-        pdf.ln()
+    # Metadatos del informe (Disclaimer legal)
+    pdf.ln(10)
+    pdf.set_font('Arial', 'I', 7)
+    pdf.set_text_color(127)
+    pdf.multi_cell(0, 4, cs("Disclaimer: Simulacion de tendencias estadistica de consultoria que en ningun caso sustituye a "
+                            "tasacion legal. El modelo SDE v40 (Cholesky/Markov/Var) usa simulaciones P50. "
+                            f"Shock Residencial/Turistico: {'Activado (+caidas asimilables al Real Decreto de turismo)' if params.get('shock_vt') else 'Desactivado'}."))
 
     raw = pdf.output(dest='S')
     return bytes(raw) if isinstance(raw, (bytes, bytearray)) else raw.encode('latin-1')
@@ -2312,6 +2382,4 @@ st.caption(
     f"beta_vta: {modelo_act['beta_vta'].min():.2f}-{modelo_act['beta_vta'].max():.2f} | "
     f"beta_alq: {modelo_act['beta_alq'].min():.2f}-{modelo_act['beta_alq'].max():.2f}"
 )
-
-
 
