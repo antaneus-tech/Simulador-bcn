@@ -1096,24 +1096,27 @@ with tab1:
     p10_a = np.percentile(sa_act[:, idx, :], 10, axis=0)
     p50_a = np.percentile(sa_act[:, idx, :], 50, axis=0)
     p90_a = np.percentile(sa_act[:, idx, :], 90, axis=0)
-    p50_crec = np.percentile(sv_crec[:, idx, :], 50, axis=0)
-    p50_rec  = np.percentile(sv_rec[:,  idx, :], 50, axis=0)
+    p50_crec   = np.percentile(sv_crec[:, idx, :], 50, axis=0)
+    p50_rec    = np.percentile(sv_rec[:,  idx, :], 50, axis=0)
+    p50_a_crec = np.percentile(sa_crec[:, idx, :], 50, axis=0)
+    p50_a_rec  = np.percentile(sa_rec[:,  idx, :], 50, axis=0)
 
     fig = make_subplots(
         rows=1, cols=2,
         subplot_titles=(f"Precio Venta EUR/m² — {sel_dist}",
                         f"Alquiler EUR/m²/mes — {sel_dist}"),
-        horizontal_spacing=0.08
+        horizontal_spacing=0.10
     )
 
+    # ── GRÁFICO VENTA (col=1) ───────────────────────────────────────────────
     # Histórico venta (reconstruido)
-    # Filtrar: solo años <= ano_fin del set activo Y con valor > 0 (evita bug 2026=0)
     mask_hist = (anos_macro <= ds_activo['ano_fin']) & (rec[idx] > 0)
     fig.add_trace(go.Scatter(
         x=anos_macro[mask_hist], y=rec[idx][mask_hist],
         mode='lines+markers', name='Histórico/Rec.',
         line=dict(color='#2c3e50', width=2), marker=dict(size=4),
-        hovertemplate='%{x}: %{y:,.0f} €/m²<extra>Histórico</extra>'
+        legendgroup='venta', legend='legend',
+        hovertemplate='%{x}: %{y:,.0f} €/m²<extra>Histórico vta</extra>'
     ), row=1, col=1)
     fig.add_vline(x=ds_activo['ano_fin'], line_dash="dash",
                   line_color="navy", line_width=1.5, row=1, col=1)
@@ -1124,59 +1127,99 @@ with tab1:
              list(np.concatenate([[last_v], p10_v])[::-1])
     fig.add_trace(go.Scatter(x=x_band, y=y_band, fill='toself',
         fillcolor='rgba(231,76,60,0.13)', line=dict(color='rgba(0,0,0,0)'),
-        name='IC P10–P90', hoverinfo='skip'
+        name='IC P10–P90', hoverinfo='skip',
+        legendgroup='venta', legend='legend',
     ), row=1, col=1)
 
-    # P50 activo
+    # P50 activo venta
     fig.add_trace(go.Scatter(
         x=anos_plot, y=np.concatenate([[last_v], p50_v]),
-        mode='lines', name=f'P50 activo',
+        mode='lines', name='P50 activo',
         line=dict(color='#e74c3c', width=2.5, dash='dash'),
-        hovertemplate='%{x}: %{y:,.0f} €/m²<extra>P50 activo</extra>'
+        legendgroup='venta', legend='legend',
+        hovertemplate='%{x}: %{y:,.0f} €/m²<extra>P50 activo vta</extra>'
     ), row=1, col=1)
 
-    # Escenarios referencia
+    # Escenarios referencia venta
     fig.add_trace(go.Scatter(
         x=anos_plot, y=np.concatenate([[last_v], p50_crec]),
         mode='lines', name='P50 Crecimiento',
         line=dict(color='#27ae60', width=1.2, dash='dot'),
-        hovertemplate='%{x}: %{y:,.0f}<extra>Crecimiento</extra>'
+        legendgroup='venta', legend='legend',
+        hovertemplate='%{x}: %{y:,.0f}<extra>Crecimiento vta</extra>'
     ), row=1, col=1)
     fig.add_trace(go.Scatter(
         x=anos_plot, y=np.concatenate([[last_v], p50_rec]),
         mode='lines', name='P50 Recesión',
         line=dict(color='#7f8c8d', width=1.2, dash='dot'),
-        hovertemplate='%{x}: %{y:,.0f}<extra>Recesion</extra>'
+        legendgroup='venta', legend='legend',
+        hovertemplate='%{x}: %{y:,.0f}<extra>Recesión vta</extra>'
     ), row=1, col=1)
 
+    # ── GRÁFICO ALQUILER (col=2) ────────────────────────────────────────────
     # Alquiler histórico
     fig.add_trace(go.Scatter(
         x=ds_activo['anos_alq'], y=ds_activo['alquiler'][idx],
         mode='lines+markers', name='Alquiler histórico',
         line=dict(color='#2c3e50', width=2), marker=dict(size=4),
-        hovertemplate='%{x}: %{y:.1f} €/m²/mes<extra>Histórico</extra>'
+        legendgroup='alq', legend='legend2',
+        hovertemplate='%{x}: %{y:.1f} €/m²/mes<extra>Histórico alq</extra>'
     ), row=1, col=2)
     fig.add_vline(x=ds_activo['ano_fin'], line_dash="dash",
                   line_color="navy", line_width=1.5, row=1, col=2)
 
+    # Banda P10-P90 alquiler
     x_ba = list(anos_plot) + list(anos_plot[::-1])
     y_ba = list(np.concatenate([[last_a], p90_a])) + \
            list(np.concatenate([[last_a], p10_a])[::-1])
     fig.add_trace(go.Scatter(x=x_ba, y=y_ba, fill='toself',
         fillcolor='rgba(39,174,96,0.13)', line=dict(color='rgba(0,0,0,0)'),
-        name='IC Alq P10–P90', hoverinfo='skip'
+        name='IC Alq P10–P90', hoverinfo='skip',
+        legendgroup='alq', legend='legend2',
     ), row=1, col=2)
+
+    # P50 activo alquiler
     fig.add_trace(go.Scatter(
         x=anos_plot, y=np.concatenate([[last_a], p50_a]),
-        mode='lines', name='P50 alquiler',
-        line=dict(color='#27ae60', width=2.5, dash='dash'),
-        hovertemplate='%{x}: %{y:.1f} €/m²/mes<extra>P50 alquiler</extra>'
+        mode='lines', name='P50 activo alq',
+        line=dict(color='#e74c3c', width=2.5, dash='dash'),
+        legendgroup='alq', legend='legend2',
+        hovertemplate='%{x}: %{y:.1f} €/m²/mes<extra>P50 activo alq</extra>'
+    ), row=1, col=2)
+
+    # P50 Crecimiento alquiler
+    fig.add_trace(go.Scatter(
+        x=anos_plot, y=np.concatenate([[last_a], p50_a_crec]),
+        mode='lines', name='P50 Crec. alq',
+        line=dict(color='#27ae60', width=1.2, dash='dot'),
+        legendgroup='alq', legend='legend2',
+        hovertemplate='%{x}: %{y:.1f}<extra>Crecimiento alq</extra>'
+    ), row=1, col=2)
+
+    # P50 Recesión alquiler
+    fig.add_trace(go.Scatter(
+        x=anos_plot, y=np.concatenate([[last_a], p50_a_rec]),
+        mode='lines', name='P50 Rec. alq',
+        line=dict(color='#7f8c8d', width=1.2, dash='dot'),
+        legendgroup='alq', legend='legend2',
+        hovertemplate='%{x}: %{y:.1f}<extra>Recesión alq</extra>'
     ), row=1, col=2)
 
     fig.update_layout(
         height=480, template='plotly_white', hovermode='x unified',
-        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
-        margin=dict(t=60, b=40, l=40, r=20),
+        # Leyenda izquierda: alineada con eje Y del gráfico de venta
+        legend=dict(
+            orientation='v', x=0.0, xanchor='left', y=1.0, yanchor='bottom',
+            bgcolor='rgba(255,255,255,0.85)', borderwidth=0,
+            font=dict(size=11),
+        ),
+        # Leyenda derecha: alineada con eje Y del gráfico de alquiler
+        legend2=dict(
+            orientation='v', x=0.52, xanchor='left', y=1.0, yanchor='bottom',
+            bgcolor='rgba(255,255,255,0.85)', borderwidth=0,
+            font=dict(size=11),
+        ),
+        margin=dict(t=80, b=40, l=40, r=20),
     )
     fig.update_xaxes(showgrid=True, gridcolor='rgba(0,0,0,0.06)')
     fig.update_yaxes(showgrid=True, gridcolor='rgba(0,0,0,0.06)', tickformat=',')
@@ -1190,38 +1233,39 @@ with tab1:
     n_yr   = 2032 - ds_activo['ano_fin']
 
     k1, k2, k3, k4, k5, k6 = st.columns(6)
-    k1.metric("Venta 2032",    f"{int(v_fin):,} €/m²",
+    k1.metric("Venta P50 2032",       f"{int(v_fin):,} €/m²",
               f"{((v_fin/last_v)-1)*100:.1f}%")
-    k2.metric("Alquiler 2032", f"{a_fin:.1f} €/m²/mes",
+    k2.metric("Alquiler P50 2032",    f"{a_fin:.1f} €/m²/mes",
               f"{((a_fin/last_a)-1)*100:.1f}%")
-    k3.metric("Yield 2032",    f"{yld_32:.1f}%")
-    k4.metric("Drift hist.",   f"{modelo_act['drift_venta'][idx]*100:.2f}%/a")
-    k5.metric("β_vta",         f"{modelo_act['beta_vta'][idx]:.3f}")
-    k6.metric("β_alq",         f"{modelo_act['beta_alq'][idx]:.3f}")
+    k3.metric("Yield bruto 2032 (alq/vta)", f"{yld_32:.1f}%")
+    k4.metric("Drift hist. vta",      f"{modelo_act['drift_venta'][idx]*100:.2f}%/a")
+    k5.metric("β_vta",                f"{modelo_act['beta_vta'][idx]:.3f}")
+    k6.metric("β_alq",                f"{modelo_act['beta_alq'][idx]:.3f}")
 
-    # Tabla todos los distritos
     st.markdown(f"#### Tabla Base {ds_activo['ano_fin']} — Todos los Distritos")
     pv0_tab = ds_activo['venta'][:, -1]
     pa0_tab = ds_activo['alquiler'][:, -1]
     rows = []
     for i, d in enumerate(distritos):
-        v32_i = float(np.median(sv_act[:, i, -1]))
+        v32_i  = float(np.median(sv_act[:, i, -1]))
+        a32_i  = float(np.median(sa_act[:, i, -1]))
         cagr_i = ((v32_i / pv0_tab[i]) ** (1/n_yr) - 1) * 100
         rows.append({
-            'Distrito':       d,
+            'Distrito':                      d,
             f'Venta {ds_activo["ano_fin"]}': int(pv0_tab[i]),
-            'Venta 2032 P50': int(v32_i),
-            'CAGR %':         round(cagr_i, 2),
-            f'Alq {ds_activo["ano_fin"]}': round(pa0_tab[i], 1),
-            'Yield bruto':    f"{(pa0_tab[i]*12/pv0_tab[i]*100):.1f}%",
-            'β_vta':          round(modelo_act['beta_vta'][i], 3),
-            'β_alq':          round(modelo_act['beta_alq'][i], 3),
-            'Drift venta %':  round(modelo_act['drift_venta'][i]*100, 2),
+            'Venta 2032 P50':                int(v32_i),
+            'CAGR vta %':                    round(cagr_i, 2),
+            f'Alq {ds_activo["ano_fin"]}':   round(pa0_tab[i], 1),
+            'Alq 2032 P50':                  round(a32_i, 1),
+            'Yield bruto':                   f"{(pa0_tab[i]*12/pv0_tab[i]*100):.1f}%",
+            'β_vta':                         round(modelo_act['beta_vta'][i], 3),
+            'β_alq':                         round(modelo_act['beta_alq'][i], 3),
+            'Drift venta %':                 round(modelo_act['drift_venta'][i]*100, 2),
         })
     df_tab = pd.DataFrame(rows)
     st.dataframe(
         df_tab.set_index('Distrito')
-        .style.format({'CAGR %': '{:.2f}%'}),
+        .style.format({'CAGR vta %': '{:.2f}%'}),
         use_container_width=True
     )
 
@@ -1241,24 +1285,24 @@ with tab2:
         betas_v.append(round(modelo_act['beta_vta'][i], 3))
 
     df_rr = pd.DataFrame({
-        'Distrito':         distritos,
-        'Retorno CAGR (%)': cagrs,
-        'Riesgo CV (%)':    vols,
-        'Venta P50 2032':   v32s,
-        'β_vta':            betas_v,
+        'Distrito':            distritos,
+        'Retorno CAGR vta (%)': cagrs,
+        'Riesgo CV (%)':       vols,
+        'Venta P50 2032':      v32s,
+        'β_vta':               betas_v,
     })
     fig_rr = px.scatter(
-        df_rr, x='Riesgo CV (%)', y='Retorno CAGR (%)', text='Distrito',
-        color='Retorno CAGR (%)', color_continuous_scale='RdYlGn',
+        df_rr, x='Riesgo CV (%)', y='Retorno CAGR vta (%)', text='Distrito',
+        color='Retorno CAGR vta (%)', color_continuous_scale='RdYlGn',
         size=[b * 15 for b in betas_v], size_max=28,
         hover_data={'β_vta': True, 'Venta P50 2032': ':,'},
         title=(f"Cuadrante Riesgo/Retorno · {reg_sel} · "
                f"Euribor={euribor_val}% · Paro={paro_val}% · "
-               f"Tamaño burbuja = β_vta"),
+               f"Tamaño burbuja = β_vta · Retorno = CAGR precio venta"),
         template='plotly_white',
     )
     mr_rr = df_rr['Riesgo CV (%)'].mean()
-    mt_rr = df_rr['Retorno CAGR (%)'].mean()
+    mt_rr = df_rr['Retorno CAGR vta (%)'].mean()
     fig_rr.add_vline(x=mr_rr, line_dash="dash", line_color="#e74c3c", line_width=1.2)
     fig_rr.add_hline(y=mt_rr, line_dash="dash", line_color="#e74c3c", line_width=1.2)
     fig_rr.add_annotation(
@@ -1277,7 +1321,7 @@ with tab2:
 
     st.dataframe(
         df_rr.style
-        .format({'Retorno CAGR (%)': '{:.2f}%', 'Riesgo CV (%)': '{:.2f}%',
+        .format({'Retorno CAGR vta (%)': '{:.2f}%', 'Riesgo CV (%)': '{:.2f}%',
                  'Venta P50 2032': '{:,}'}),
         use_container_width=True
     )
