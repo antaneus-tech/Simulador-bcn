@@ -1306,12 +1306,12 @@ with tab2:
     fig_rr.add_vline(x=mr_rr, line_dash="dash", line_color="#e74c3c", line_width=1.2)
     fig_rr.add_hline(y=mt_rr, line_dash="dash", line_color="#e74c3c", line_width=1.2)
     fig_rr.add_annotation(
-        x=df_rr['Riesgo CV (%)'].min()+0.1, y=df_rr['Retorno CAGR (%)'].max(),
+        x=df_rr['Riesgo CV (%)'].min()+0.1, y=df_rr['Retorno CAGR vta (%)'].max(),
         text="⭐ ESTRELLAS (bajo riesgo, alto retorno)",
         showarrow=False, font=dict(color="#27ae60", size=11)
     )
     fig_rr.add_annotation(
-        x=df_rr['Riesgo CV (%)'].max()-0.3, y=df_rr['Retorno CAGR (%)'].min(),
+        x=df_rr['Riesgo CV (%)'].max()-0.3, y=df_rr['Retorno CAGR vta (%)'].min(),
         text="⚠️ INEFICIENTES", showarrow=False,
         font=dict(color="#c0392b", size=11)
     )
