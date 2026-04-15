@@ -1,5 +1,5 @@
 # ==============================================================================
-# BARCELONA STRATEGIC MODEL v40.1
+# BARCELONA STRATEGIC MODEL v40.2
 # ==============================================================================
 # Arquitectura SDE hibrida con Betas empiricas independientes (venta/alquiler),
 # arquitectura hibrida Set A/B, shock de regimen aditivo Phi(S,M) con asimetria
@@ -201,7 +201,7 @@ hr { border-top: 2px solid #C0D6DF; }
 """, unsafe_allow_html=True)
 
 # ============================================================================
-# 2. DATOS — AMBOS SETS (sin cambios respecto a v33)
+# 2. DATOS — AMBOS SETS 
 # ============================================================================
 
 distritos = [
@@ -1437,7 +1437,7 @@ with tab3:
 # TAB 4 — PARÁMETROS v40
 # ============================================================================
 with tab4:
-    st.subheader("Parámetros Calibrados v40 — Arquitectura Híbrida")
+    st.subheader("Parámetros Calibrados v40.2 — Arquitectura Híbrida")
     st.info(
         "**Estructurales (β, Cholesky, σ_base):** siempre desde Set B · "
         "**Inercia (μ_hist, A_var):** desde set seleccionado · "
